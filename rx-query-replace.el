@@ -99,6 +99,42 @@ is under construction."
 
 (advice-add 'reb-cook-regexp :around #'rx-query-replace--cook-regexp)
 
+(defface rx-query-replace-replacement
+  '((((class color) (background light))
+     :background "palegreen")
+    (((class color) (background dark))
+     :background "#2e4a2e")
+    (t
+     :inverse-video t))
+  "Face used for the replacement preview.
+visual-regexp shows the match and its replacement preview in the
+same face, so this distinct face makes the preview recognizable."
+  :group 'matching)
+
+(defvar rx-query-replace--vr-session nil
+  "Non-nil while a replacement session drives visual-regexp.")
+
+(defun rx-query-replace--replacement-feedback (orig replacement match-data i)
+  "Around-advice for `vr--do-replace-feedback-match-callback'.
+Give the replacement preview its own face, so the match (visual-
+regexp faces) and the would-be replacement (the distinct
+`rx-query-replace-replacement' face) can be told apart.  Only
+affects `rx-query-replace' sessions; plain visual-regexp is
+unchanged."
+  (funcall orig replacement match-data i)
+  (when rx-query-replace--vr-session
+    (let ((ov (vr--get-overlay i 0)))
+      (when (overlayp ov)
+        (dolist (prop '(after-string display))
+          (let ((s (overlay-get ov prop)))
+            (when (stringp s)
+              (overlay-put ov prop
+                           (propertize (substring-no-properties s)
+                                       'face 'rx-query-replace-replacement)))))))))
+
+(advice-add 'vr--do-replace-feedback-match-callback
+            :around #'rx-query-replace--replacement-feedback)
+
 (defvar rx-query-replace--prev-syntax nil
   "Value of `reb-re-syntax' before entering `rx-query-replace'.")
 
@@ -171,7 +207,7 @@ aborted."
     (when (string-empty-p from)
       (error "Empty regexp"))
     (condition-case nil
-        (progn
+        (let ((rx-query-replace--vr-session t))
           (rx-query-replace--vr-read-replacement target from bounds query)
           (reb-assert-buffer-in-window)
           (select-window reb-target-window)
