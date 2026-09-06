@@ -1,11 +1,12 @@
 ;;; rxr.el --- Query-replace with rx forms and live preview -*- lexical-binding: t -*-
 
-;; Copyright (C) 2026 Free Software Foundation, Inc.
+;; Copyright (C) 2026 Kazure Zheng <kazurezheng@gmail.com>
 
 ;; Author: Kazure Zheng <kazurezheng@gmail.com>
 ;; Keywords: matching, lisp, tools
 ;; Version: 0.3.0
 ;; Package-Requires: ((emacs "28.1") (visual-regexp "1.1"))
+;; URL: https://github.com/kazure/rxr
 
 ;; This file is not part of GNU Emacs.
 
@@ -55,8 +56,14 @@
 (require 'rx)
 (require 'visual-regexp)
 
-(defconst rxr-max-paren-recovery 20
-  "Maximum number of closing parens tried by rx form recovery.")
+(defgroup rxr nil
+  "Interactive replacement with `rx' forms and live preview."
+  :group 'matching)
+
+(defcustom rxr-max-paren-recovery 20
+  "Maximum number of closing parens tried by rx form recovery."
+  :type 'integer
+  :group 'rxr)
 
 (defun rxr--recover-read (re)
   "Read RE as an rx form, closing unbalanced parentheses.
@@ -109,7 +116,7 @@ is under construction."
   "Face used for the replacement preview.
 visual-regexp shows the match and its replacement preview in the
 same face, so this distinct face makes the preview recognizable."
-  :group 'matching)
+  :group 'rxr)
 
 (defvar rxr--vr-session nil
   "Non-nil while a replacement session drives visual-regexp.")
@@ -334,7 +341,8 @@ all matches at once, without confirming every match."
 Makes \\[rxr-submit] run the replacement for the rx
 form in the buffer, and \\[rxr-quit] quit."
   :lighter " rxr"
-  :keymap rxr-mode-map)
+  :keymap rxr-mode-map
+  :group 'rxr)
 
 (provide 'rxr)
 

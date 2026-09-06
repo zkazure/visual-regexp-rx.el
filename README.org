@@ -94,7 +94,7 @@ C-y
 
 1. 在想要替换的 buffer 中运行 =M-x rxr-query-replace= 或 =M-x rxr-replace=。该 buffer 成为替换目标，另一个窗口打开 =*RE-Builder*= buffer，内容为 ='(seq)=。
 2. 在其中编辑 rx 表达式，例如 ='(seq "TODO" (+ blank) (group (+ nonl)))=。每次编辑都会在目标 buffer 中实时高亮所有匹配。
-   - *输入容错*：输入过程中未闭合的括号会自动补全（最多 20 个）参与编译；空 =()= 视为 =(seq)= 占位。因此高亮在输入过程中不会消失。
+   - *输入容错*：输入过程中未闭合的括号会自动补全（最多 =rxr-max-paren-recovery= 个，默认 20）参与编译；空 =()= 视为 =(seq)= 占位。因此高亮在输入过程中不会消失。
    - 真正的错误（如未知符号 ='(foo)=）照常在 mode-line 报错，不会崩溃。
 3. =C-c C-c=：minibuffer 输入 replacement（支持 =\1= 等分组引用）。*每敲一键，每个匹配后实时显示「 → 替换结果」*（overlay 虚拟预览，目标 buffer 内容并未真正修改）。匹配保持 vr 高亮色，替换预览使用独立的 =rxr-replacement= face（浅绿背景，可用 =M-x customize-face= 调整），两者易于区分；纯 visual-regexp 会话不受影响。
    - =RET= 确认：=rxr= 进入 y/n 逐个确认（每个匹配同样带实时预览）；=rxr-replace= 直接替换全部。完成（含 y/n 循环结束）后 RE-Builder 窗口自动关闭。
