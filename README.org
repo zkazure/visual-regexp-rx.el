@@ -85,6 +85,8 @@ C-y
 | =C-c C-u= | =reb-force-update= | 忽略匹配上限强制刷新 |
 | =C-c C-q= | =reb-quit= | re-builder 原生退出 |
 
+大小写：预览与替换都遵循目标 buffer 的 =case-fold-search=（默认开启，=C-c C-t= 切换）。与 =query-replace-regexp= 不同，regexp 中出现大写字母不会让替换悄悄切换成大小写敏感——所见即所替。
+
 从任意 buffer 再次运行 =M-x rx-query-replace= 会把该 buffer 设为新的替换目标；对同一目标 buffer 重进会自动恢复上次的 rx 表达式。
 
 * 实现原理
