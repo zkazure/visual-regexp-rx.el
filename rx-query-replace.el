@@ -160,9 +160,13 @@ minibuffer and returns it.  TARGET is the buffer to replace in,
 FROM the compiled regexp, BOUNDS the region limits (or nil), and
 QUERY non-nil makes the prompt say \"Query replace\".  A `quit'
 signal means the input was aborted."
+  ;; Bounds must be computed in the target buffer: this function is
+  ;; called with the RE Builder buffer current, whose `point-max' is
+  ;; the length of the rx source, not of the target.
+  (with-current-buffer target
+    (setq vr--target-buffer-start (or (car bounds) (point-min))
+          vr--target-buffer-end (or (cdr bounds) (point-max))))
   (setq vr--target-buffer target
-        vr--target-buffer-start (or (car bounds) (point-min))
-        vr--target-buffer-end (or (cdr bounds) (point-max))
         vr--regexp-string from
         vr--last-minibuffer-contents ""
         vr--calling-func (if query 'vr--calling-func-query-replace
