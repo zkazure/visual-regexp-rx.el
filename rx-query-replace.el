@@ -4,8 +4,8 @@
 
 ;; Author: Kazure Zheng <kazurezheng@gmail.com>
 ;; Keywords: matching, lisp, tools
-;; Version: 0.2.0
-;; Package-Requires: ((emacs "28.1"))
+;; Version: 0.3.0
+;; Package-Requires: ((emacs "28.1") (visual-regexp "1.1"))
 
 ;; This file is not part of GNU Emacs.
 
@@ -35,26 +35,25 @@
 ;;
 ;;   M-x rx-replace        ; same, but RET replaces all matches at once
 ;;
-;; While you type the replacement string in the minibuffer, the
-;; would-be result is shown as an overlay on every match in the
-;; target buffer, without modifying it (the same approach as
-;; visual-regexp).  C-g aborts the input and keeps the RE Builder
-;; open.
+;; The replacement phase is driven by visual-regexp: while you type
+;; the replacement string in the minibuffer, the would-be result is
+;; shown as an overlay on every match, without modifying the buffer.
+;; RET confirms, C-g aborts and keeps the RE Builder open, C-c p
+;; toggles the preview style and C-c a the match limit.
 ;;
 ;; This is a thin layer on top of `re-builder': it uses the RE
-;; Builder's built-in `rx' syntax for editing, its live overlay
-;; updates for the match preview, and `perform-replace' for the
-;; replacement.  Because it builds on `re-builder' internals
-;; (`reb-re-syntax', `reb-update-regexp', `reb-auto-update', ...),
-;; it requires Emacs 28.1 or later.
+;; Builder's built-in `rx' syntax for editing and its live overlay
+;; updates for the match preview, and visual-regexp's replacement
+;; feedback and query loop for the replacement itself.  Because it
+;; builds on `re-builder' internals (`reb-re-syntax',
+;; `reb-update-regexp', `reb-auto-update', ...), it requires Emacs
+;; 28.1 or later.
 
 ;;; Code:
 
 (require 're-builder)
 (require 'rx)
-
-(defvar rx-query-replace-replacement-history nil
-  "History of replacement strings for `rx-query-replace'.")
+(require 'visual-regexp)
 
 (defvar rx-query-replace--prev-syntax nil
   "Value of `reb-re-syntax' before entering `rx-query-replace'.")
@@ -63,91 +62,38 @@
   "Whether `rx-query-replace-submit' replaces all matches at once.
 Set by the entry commands `rx-query-replace' and `rx-replace'.")
 
-(defvar rx-query-replace--preview-overlays nil
-  "Overlays showing the live replacement preview in the target buffer.")
-
-(defvar rx-query-replace--minibuffer-state nil
-  "Plist with the context of the replacement minibuffer session.
-Holds :target, :from and :bounds.")
-
-(defvar rx-query-replace-minibuffer-keymap
-  (let ((map (copy-keymap minibuffer-local-map)))
-    (define-key map (kbd "C-c C-c") #'exit-minibuffer)
-    (define-key map (kbd "C-c C-k") #'keyboard-quit)
-    map)
-  "Keymap used while entering the replacement string.")
-
-(defun rx-query-replace--delete-preview-overlays ()
-  "Delete all replacement preview overlays."
-  (dolist (ov rx-query-replace--preview-overlays)
-    (when (overlay-buffer ov)
-      (delete-overlay ov)))
-  (setq rx-query-replace--preview-overlays nil))
-
-(defun rx-query-replace--update-preview (&optional replacement)
-  "Show the replacement preview in the target buffer.
-REPLACEMENT defaults to the minibuffer contents.  Creates an
-overlay on every match, displaying the would-be replacement
-without modifying the buffer."
-  (let* ((state rx-query-replace--minibuffer-state)
-         (replacement (or replacement (minibuffer-contents-no-properties)))
-         (target (plist-get state :target))
-         (from (plist-get state :from))
-         (bounds (plist-get state :bounds))
-         (limit (or reb-auto-match-limit most-positive-fixnum)))
-    (rx-query-replace--delete-preview-overlays)
-    (condition-case err
-        (save-excursion
-          (with-current-buffer target
-            (goto-char (or (car bounds) (point-min)))
-            (let ((case-fold-search case-fold-search)
-                  (nocasify (not (and case-replace case-fold-search)))
-                  (count 0))
-              (while (and (not (eobp))
-                          (< count limit)
-                          (re-search-forward from (or (cdr bounds) (point-max)) t))
-                ;; Don't get stuck on zero-width matches.
-                (when (and (= (match-beginning 0) (match-end 0))
-                           (not (eobp)))
-                  (forward-char 1))
-                (let* ((repl (match-substitute-replacement replacement nocasify nil))
-                       (ov (make-overlay (match-beginning 0) (match-end 0) target)))
-                  (overlay-put ov 'priority 1001)
-                  (if (= (match-beginning 0) (match-end 0))
-                      (overlay-put ov 'after-string (propertize repl 'face 'reb-match-0))
-                    (overlay-put ov 'display (propertize repl 'face 'reb-match-0)))
-                  (push ov rx-query-replace--preview-overlays))
-                (setq count (1+ count))))))
-      (error (minibuffer-message (format " %s" (error-message-string err)))))))
-
-(defun rx-query-replace--after-change (&rest _)
-  "Update the replacement preview when the minibuffer changes."
-  (when (and rx-query-replace--minibuffer-state (minibufferp))
-    ;; Browsing the history momentarily empties the minibuffer; skip
-    ;; that flicker (same guard as visual-regexp).
-    (unless (and (string= "" (minibuffer-contents-no-properties))
-                 (eq last-command 'previous-history-element))
-      (rx-query-replace--update-preview))))
-
-(defun rx-query-replace--read-replacement (target from bounds)
-  "Read a replacement string, previewing it live in TARGET.
-FROM is the compiled regexp and BOUNDS the region limits, or nil
-for the whole buffer.  While the user types, the would-be
-replacement is shown as overlays on every match, without
-modifying TARGET.  A normal return means the replacement was
-confirmed; a `quit' signal means it was aborted."
-  (setq rx-query-replace--minibuffer-state
-        (list :target target :from from :bounds bounds))
+(defun rx-query-replace--vr-read-replacement (target from bounds query)
+  "Read a replacement string with visual-regexp live feedback.
+Sets up the visual-regexp internals like `vr--interactive-get-args'
+would (minus reading the regexp), reads the replacement from the
+minibuffer and returns it.  TARGET is the buffer to replace in,
+FROM the compiled regexp, BOUNDS the region limits (or nil), and
+QUERY non-nil makes the prompt say \"Query replace\".  A `quit'
+signal means the input was aborted."
+  (setq vr--target-buffer target
+        vr--target-buffer-start (or (car bounds) (point-min))
+        vr--target-buffer-end (or (cdr bounds) (point-max))
+        vr--regexp-string from
+        vr--last-minibuffer-contents ""
+        vr--calling-func (if query 'vr--calling-func-query-replace
+                           'vr--calling-func-replace)
+        vr--feedback-limit vr/default-feedback-limit
+        vr--replace-preview vr/default-replace-preview)
+  ;; Deactivate the mark in the target so the feedback faces are not
+  ;; obscured by the region face.
+  (with-current-buffer target
+    (deactivate-mark))
+  (add-hook 'after-change-functions #'vr--after-change)
+  (add-hook 'minibuffer-setup-hook #'vr--minibuffer-setup)
   (unwind-protect
-      (minibuffer-with-setup-hook
-          (lambda ()
-            (add-hook 'after-change-functions #'rx-query-replace--after-change nil t)
-            (rx-query-replace--update-preview))
-        (read-from-minibuffer "Replace with: " nil
-                              rx-query-replace-minibuffer-keymap
-                              nil 'rx-query-replace-replacement-history))
-    (rx-query-replace--delete-preview-overlays)
-    (setq rx-query-replace--minibuffer-state nil)))
+      (vr--set-replace-string)
+    (setq vr--in-minibuffer nil)
+    (remove-hook 'after-change-functions #'vr--after-change)
+    (remove-hook 'minibuffer-setup-hook #'vr--minibuffer-setup)
+    (setq vr--calling-func nil)
+    (vr--delete-overlay-displays)
+    (vr--delete-overlays))
+  vr--replace-string)
 
 (defun rx-query-replace--region-bounds (target)
   "Return (beg . end) if TARGET shows an active region, else nil."
@@ -168,11 +114,12 @@ empty string, and put point after the opening paren."
 (defun rx-query-replace--perform (query)
   "Run the replacement for the rx form in the RE Builder buffer.
 If QUERY is non-nil, ask for confirmation on every match with
-`perform-replace'; otherwise replace all matches at once.  Reads
-the replacement string with a live preview in the target buffer
-and closes the RE Builder when the replacement is done.  Signals
-an error if the rx form is invalid or compiles to an empty
-regexp; returns nil if the replacement input was aborted."
+visual-regexp's query loop; otherwise replace all matches at
+once.  Reads the replacement string with a live preview in the
+target buffer and closes the RE Builder when the replacement is
+done.  Signals an error if the rx form is invalid or compiles to
+an empty regexp; returns nil if the replacement input was
+aborted."
   (reb-update-regexp)
   (let* ((target reb-target-buffer)
          (from (buffer-local-value 'reb-regexp target))
@@ -180,55 +127,31 @@ regexp; returns nil if the replacement input was aborted."
     (when (string-empty-p from)
       (error "Empty regexp"))
     (condition-case nil
-        (let ((to (rx-query-replace--read-replacement target from bounds)))
+        (progn
+          (rx-query-replace--vr-read-replacement target from bounds query)
           (reb-assert-buffer-in-window)
           (select-window reb-target-window)
-          (if query
-              (progn
-                ;; The preview highlights all matches from the start;
-                ;; start replacing there too (a region still limits it).
-                (goto-char (or (car bounds) (point-min)))
-                ;; `perform-replace' silently switches to case-sensitive
-                ;; matching when the regexp contains upper-case letters
-                ;; (`search-upper-case'), but the preview does not.
-                ;; Bind it to nil so the replacement always follows the
-                ;; preview, i.e. the target buffer's `case-fold-search'
-                ;; (toggle with `reb-toggle-case').
-                (let ((search-upper-case nil))
-                  (perform-replace from to t t nil)))
-            (rx-query-replace--replace-all from to bounds))
+          ;; `vr--get-replacement' emulates `perform-replace''s
+          ;; upper-case heuristic (`search-upper-case'), but the match
+          ;; preview does not.  Bind it to nil so the replacement
+          ;; always follows the preview, i.e. the target buffer's
+          ;; `case-fold-search' (toggle with `reb-toggle-case').
+          (let ((search-upper-case nil))
+            (if query
+                (vr--perform-query-replace)
+              (vr--do-replace)))
           (rx-query-replace-quit))
       (quit nil))))
-
-(defun rx-query-replace--replace-all (from to bounds)
-  "Replace every match of FROM with TO in the current buffer.
-Respects BOUNDS (a cons of region limits) when non-nil, and the
-buffer's `case-fold-search'.  Returns the replacement count."
-  (let ((count 0))
-    (save-excursion
-      (goto-char (or (car bounds) (point-min)))
-      (let ((case-fold-search case-fold-search)
-            (nocasify (not (and case-replace case-fold-search))))
-        (while (and (not (eobp))
-                    (re-search-forward from (or (cdr bounds) (point-max)) t))
-          (when (and (= (match-beginning 0) (match-end 0))
-                     (not (eobp)))
-            (forward-char 1))
-          (let ((repl (match-substitute-replacement to nocasify nil)))
-            (replace-match repl t t)
-            (setq count (1+ count))))))
-    (message "Replaced %d occurrence%s" count (if (= count 1) "" "s"))
-    count))
 
 (defun rx-query-replace-submit ()
   "Replace using the rx form in the RE Builder buffer.
 Reads a replacement string with a live preview of every match,
 then runs the replacement in the target buffer.  In
 `rx-query-replace' sessions, every match is confirmed with
-`perform-replace'; in `rx-replace' sessions, all matches are
-replaced at once.  The RE Builder window is closed when the
-replacement is done; \\[keyboard-quit] while entering the
-replacement aborts and keeps the RE Builder open."
+visual-regexp's query loop; in `rx-replace' sessions, all matches
+are replaced at once.  The RE Builder window is closed when the
+replacement is done; C-g while entering the replacement aborts
+and keeps the RE Builder open."
   (interactive)
   (condition-case err
       (rx-query-replace--perform (not rx-query-replace--replace-all))
