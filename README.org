@@ -3,7 +3,12 @@
 
 * rx-query-replace
 
-用 =rx= 宏编写正则，实时预览匹配结果，并直接进行交互式替换。
+用 =rx= 宏编写正则，实时预览匹配结果，输入 replacement 时实时预览替换结果，交互式替换。
+
+两个命令：
+
+- =M-x rx-query-replace= ：确认后对每个匹配 y/n 询问（query replace）
+- =M-x rx-replace= ：确认后一次替换全部匹配（replace all）
 
 #+begin_src text
 M-x rx-query-replace
@@ -22,9 +27,16 @@ M-x rx-query-replace
 C-c C-c
         │
 输入 replacement
+（每敲一键，所有匹配实时显示替换结果）
         │
         ▼
-query replace
+RET 确认
+        │
+        ▼
+y/n 逐个确认（rx-replace 跳过此步）
+        │
+        ▼
+替换完成 → RE-Builder 窗口自动关闭
 #+end_src
 
 整个过程都不需要写传统 regexp。
@@ -50,7 +62,7 @@ C-y
 输入 replacement
 #+end_src
 
-需要两个命令、一个 kill-ring、一个中间字符串；理想流程只有一个命令，即本包提供的 =rx-query-replace=。
+需要两个命令、一个 kill-ring、一个中间字符串；而且输入 replacement 时看不到任何替换效果，错了要重来。本包把这些合并成一个命令，并给 replacement 输入加上实时预览（参考 visual-regexp 的 =vr/replace= / =vr/query-replace=）。
 
 * 安装
 
@@ -70,46 +82,54 @@ C-y
 
 * 用法
 
-1. 在想要替换的 buffer 中运行 =M-x rx-query-replace=。该 buffer 成为替换目标，另一个窗口打开 =*RE-Builder*= buffer，内容为 ='(seq)=。
+1. 在想要替换的 buffer 中运行 =M-x rx-query-replace= 或 =M-x rx-replace=。该 buffer 成为替换目标，另一个窗口打开 =*RE-Builder*= buffer，内容为 ='(seq)=。
 2. 在其中编辑 rx 表达式，例如 ='(seq "TODO" (+ blank) (group (+ nonl)))=。每次编辑都会在目标 buffer 中实时高亮所有匹配；无效的 rx 只在 mode-line 报错，不会崩溃。
-3. =C-c C-c=：读取 replacement（支持 =\1= 等分组引用），然后对目标 buffer 执行交互式替换（每次命中询问 y/n）。替换结束后回到 rx buffer，可继续修改 rx 再次替换。
-4. =C-c C-k=：取消。删除高亮、bury buffer、恢复窗口配置和 re-builder 语法设置。
+3. =C-c C-c=：minibuffer 输入 replacement（支持 =\1= 等分组引用）。*每敲一键，所有匹配位置实时显示替换结果*（overlay 虚拟预览，此时目标 buffer 内容并未真正修改）。
+   - =RET= / =C-c C-c= 确认：=rx-query-replace= 进入 y/n 逐个确认；=rx-replace= 直接替换全部。完成（含 y/n 循环结束）后 RE-Builder 窗口自动关闭。
+   - =C-g= / =C-c C-k= 取消：只移除预览，回到 rx buffer 继续编辑。
+4. =C-c C-r=：随时以「替换全部」语义执行（与入口命令无关）。
+5. =C-c C-k=（在 rx buffer 中）：直接退出，删高亮、恢复窗口配置和 re-builder 语法设置。
+
+rx buffer 内的键：
 
 | 键 | 命令 | 说明 |
-|-----------+----------------------------+----------------------------------------|
-| =C-c C-c= | =rx-query-replace-submit= | 读取 replacement 并开始 query-replace |
-| =C-c C-k= | =rx-query-replace-quit= | 取消并退出 |
+|-----------+--------------------------------+--------------------------------------------|
+| =C-c C-c= | =rx-query-replace-submit= | 输入 replacement（实时预览），按入口语义替换 |
+| =C-c C-r= | =rx-query-replace-submit-all= | 同上，但直接替换全部，不逐个确认 |
+| =C-c C-k= | =rx-query-replace-quit= | 退出 |
 | =C-c C-t= | =reb-toggle-case= | 切换大小写敏感（原 re-builder 的 C-c C-c） |
 | =C-c C-w= | =reb-copy= | 复制编译后的 regexp 到 kill-ring |
-| =C-c C-s= / =C-c C-r= | =reb-next-match= / =reb-prev-match= | 跳转到下一个/上一个匹配 |
+| =C-c C-s= | =reb-next-match= | 跳转到下一个匹配（prev-match 被 C-c C-r 遮蔽，可用菜单） |
 | =C-c C-u= | =reb-force-update= | 忽略匹配上限强制刷新 |
 | =C-c C-q= | =reb-quit= | re-builder 原生退出 |
 
-大小写：预览与替换都遵循目标 buffer 的 =case-fold-search=（默认开启，=C-c C-t= 切换）。与 =query-replace-regexp= 不同，regexp 中出现大写字母不会让替换悄悄切换成大小写敏感——所见即所替。
-
 从任意 buffer 再次运行 =M-x rx-query-replace= 会把该 buffer 设为新的替换目标；对同一目标 buffer 重进会自动恢复上次的 rx 表达式。
+
+大小写：高亮预览与替换都遵循目标 buffer 的 =case-fold-search=（默认开启，=C-c C-t= 切换）。与 =query-replace-regexp= 不同，regexp 中出现大写字母不会让替换悄悄切换成大小写敏感——所见即所替。
 
 * 实现原理
 
-本包是 =re-builder= 的一个薄层（约 150 行），没有自己画 overlay、没有自己解析 rx：
+本包是 =re-builder= 的一个薄层（约 300 行），没有自己画匹配高亮、没有自己解析 rx：
 
 - **rx 编辑**：将 =reb-re-syntax= 设为 =rx= 后进入 =re-builder=，其 =*RE-Builder*= buffer 使用 =reb-lisp-mode=（派生自 =emacs-lisp-mode=，免费获得缩进、paredit/smartparens/tree-sitter/rainbow-delimiters 支持），并自带 rx 关键字高亮。
 - **编译**：=reb-cook-regexp= 内部即 =(rx-to-string (eval (car (read-from-string re))))=，编辑的 rx 形式被实时编译为 regexp 字符串。
-- **实时预览**：复用 =reb-auto-update=（挂在 =after-change-functions=）→ =reb-update-regexp= → =reb-update-overlays=，提供分组多色 overlay 高亮、200 匹配上限、无效表达式只在 mode-line 报错等全部现成行为。
-- **替换**：=C-c C-c= 读取 replacement 后调用 =perform-replace=，与 =query-replace-regexp= 完全一致；替换从目标 buffer 开头开始（与预览一致），若目标 buffer 有活动 region 则仍只替换 region。替换结束后强制刷新高亮。
+- **匹配实时高亮**：复用 =reb-auto-update=（挂在 =after-change-functions=）→ =reb-update-regexp= → =reb-update-overlays=，分组多色 overlay、200 匹配上限、无效表达式只在 mode-line 报错全部现成。
+- **替换实时预览**（参考 visual-regexp）：=C-c C-c= 后 minibuffer 读取 replacement，每次按键经 =after-change-functions= 触发 =rx-query-replace--update-preview=——对每个匹配创建 overlay，用 =display= 属性虚拟显示 =match-substitute-replacement= 计算出的替换文本（支持 =\N=、case 保留），*不修改目标 buffer*；确认（RET）后才真正替换，取消（C-g）零成本。
+- **替换执行**：=rx-query-replace= 用 =perform-replace=（与 =query-replace-regexp= 完全一致），并绑定 =search-upper-case= 为 nil 以保持与预览一致的大小写语义；=rx-replace= 用逐匹配 =replace-match= 循环。两者都遵循提交时捕获的 region 限制。
 - **键位冲突**：=reb-mode-map= 中 =C-c C-c= 原本是 =reb-toggle-case=，本包的 minor-mode keymap（minor 优先于 major）覆盖了它，并把 toggle-case 挪到 =C-c C-t=。
 
 * 限制
 
 - 依赖 =re-builder= 的私有 API（=reb-*=），最低 Emacs 28.1，不保证未来版本不破坏；本包升级前可对照 =re-builder.el= 源码。
-- 预览最多高亮 =reb-auto-match-limit=（默认 200）个匹配，超出部分不显示（可用 =C-c C-u= 强制刷新查看全部）。
+- 匹配高亮与替换预览最多处理 =reb-auto-match-limit=（默认 200）个匹配，超出部分不显示（可用 =C-c C-u= 强制刷新查看全部高亮）。
+- 替换预览期间的错误提示（如无效的 =\N= 引用）显示在 minibuffer，直到下一次按键。
 - 替换期间若把目标 buffer 杀掉会报错（未处理）。
 - 空匹配的正则（如默认的 ='(seq)=）可以替换，行为与 =query-replace-regexp= 一致。
 - rx 形式会被 =eval=（re-builder rx 语法的既有行为），请不要在表达式中写有副作用的 Lisp 代码。
 
 * 路线图
 
-- 第二版：=C-c C-e= 导出 regexp 到 kill-ring；=C-c C-r= 直接 =replace-regexp=（不询问）。
+- 第二版剩余：=C-c C-e= 导出 regexp 到 kill-ring。（=C-c C-r= 直接替换已交付，并升级为带实时预览的 =rx-replace=）
 - 第三版：rx / replacement 历史，=M-p= 浏览。
 - 第四版：replace-string 风格，自动生成 =(rx "foo")=。
 - 第五版：多 buffer（=project-query-replace=，=consult-ripgrep= 集成）。
