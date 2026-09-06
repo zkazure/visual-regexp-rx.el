@@ -96,7 +96,7 @@ C-y
 2. 在其中编辑 rx 表达式，例如 ='(seq "TODO" (+ blank) (group (+ nonl)))=。每次编辑都会在目标 buffer 中实时高亮所有匹配。
    - *输入容错*：输入过程中未闭合的括号会自动补全（最多 20 个）参与编译；空 =()= 视为 =(seq)= 占位。因此高亮在输入过程中不会消失。
    - 真正的错误（如未知符号 ='(foo)=）照常在 mode-line 报错，不会崩溃。
-3. =C-c C-c=：minibuffer 输入 replacement（支持 =\1= 等分组引用）。*每敲一键，每个匹配后实时显示「 → 替换结果」*（overlay 虚拟预览，目标 buffer 内容并未真正修改）。
+3. =C-c C-c=：minibuffer 输入 replacement（支持 =\1= 等分组引用）。*每敲一键，每个匹配后实时显示「 → 替换结果」*（overlay 虚拟预览，目标 buffer 内容并未真正修改）。匹配保持 vr 高亮色，替换预览使用独立的 =rx-query-replace-replacement= face（浅绿背景，可用 =M-x customize-face= 调整），两者易于区分；纯 visual-regexp 会话不受影响。
    - =RET= 确认：=rx-query-replace= 进入 y/n 逐个确认（每个匹配同样带实时预览）；=rx-replace= 直接替换全部。完成（含 y/n 循环结束）后 RE-Builder 窗口自动关闭。
    - =C-g= 取消：只移除预览，回到 rx buffer 继续编辑。
 4. =C-c C-r=：随时以「替换全部」语义执行（与入口命令无关）。
@@ -137,7 +137,7 @@ C-y
 - **编译**：=reb-cook-regexp= 内部即 =(rx-to-string (eval (car (read-from-string re))))=，编辑的 rx 形式被实时编译为 regexp 字符串。
 - **匹配实时高亮**：复用 =reb-auto-update= → =reb-update-regexp= → =reb-update-overlays=，分组多色 overlay、200 匹配上限、无效表达式 mode-line 报错全部现成。
 - **输入容错**：=reb-cook-regexp= 的 :around advice——parse 失败时自动补右括号重试；把空 =()= 递归替换为 =(seq)=。对合法 form 恒等，不改变任何正确语义。
-- **替换实时预览与执行**：完全驱动 visual-regexp 内部机制——预设 =vr--regexp-string= / =vr--target-buffer= / bounds 后调用 =vr--set-replace-string= 读 replacement（minibuffer =after-change-functions= + overlay 箭头预览），确认后 =vr--do-replace=（全量）或 =vr--perform-query-replace=（逐匹配预览 y/n）。整个 vr 阶段绑定 =search-upper-case= 为 nil，保持「大小写跟随预览」语义。
+- **替换实时预览与执行**：完全驱动 visual-regexp 内部机制——预设 =vr--regexp-string= / =vr--target-buffer= / bounds 后调用 =vr--set-replace-string= 读 replacement（minibuffer =after-change-functions= + overlay 箭头预览），确认后 =vr--do-replace=（全量）或 =vr--perform-query-replace=（逐匹配预览 y/n）。整个 vr 阶段绑定 =search-upper-case= 为 nil，保持「大小写跟随预览」语义；:around advice 给预览文字换上独立 face，并在会话结束清扫 vr hash 表里的预览 overlay（vr 自身只清理 visible-list）。
 - **键位冲突**：=reb-mode-map= 中 =C-c C-c= 原本是 =reb-toggle-case=，本包的 minor-mode keymap（minor 优先于 major）覆盖了它，并把 toggle-case 挪到 =C-c C-t=。
 
 * 限制
