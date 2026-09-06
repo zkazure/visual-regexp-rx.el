@@ -1,4 +1,4 @@
-;;; rx-query-replace.el --- Interactive replacement with rx regexps -*- lexical-binding: t -*-
+;;; rxr.el --- Query-replace with rx forms and live preview -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2026 Free Software Foundation, Inc.
 
@@ -28,12 +28,12 @@
 ;; form with live preview, instead of copying a regexp from
 ;; `re-builder' to `query-replace-regexp'.
 ;;
-;;   M-x rx-query-replace  ; current buffer becomes the target
+;;   M-x rxr-query-replace  ; current buffer becomes the target
 ;;   ;; edit the rx form in *RE-Builder*, e.g. '(seq "foo" (group (+ digit)))
 ;;   C-c C-c               ; type a replacement: every match previews it live
 ;;   RET                   ; confirm: y/n on each match, then the window closes
 ;;
-;;   M-x rx-replace        ; same, but RET replaces all matches at once
+;;   M-x rxr-replace        ; same, but RET replaces all matches at once
 ;;
 ;; The replacement phase is driven by visual-regexp: while you type
 ;; the replacement string in the minibuffer, the would-be result is
@@ -55,27 +55,27 @@
 (require 'rx)
 (require 'visual-regexp)
 
-(defconst rx-query-replace-max-paren-recovery 20
+(defconst rxr-max-paren-recovery 20
   "Maximum number of closing parens tried by rx form recovery.")
 
-(defun rx-query-replace--recover-read (re)
+(defun rxr--recover-read (re)
   "Read RE as an rx form, closing unbalanced parentheses.
 While an rx form is being typed it is often temporarily
 unbalanced.  Try appending up to
-`rx-query-replace-max-paren-recovery' closing parens and return
+`rxr-max-paren-recovery' closing parens and return
 the first form that parses.  Signal the original error if all
 attempts fail."
   (condition-case orig-err
       (car (read-from-string re))
     (error
-     (or (cl-loop for n from 1 to rx-query-replace-max-paren-recovery
+     (or (cl-loop for n from 1 to rxr-max-paren-recovery
                   for form = (ignore-errors
                                (car (read-from-string
                                      (concat re (make-string n ?\))))))
                   when form return form)
          (signal (car orig-err) (cdr orig-err))))))
 
-(defun rx-query-replace--fill-empty (form)
+(defun rxr--fill-empty (form)
   "Replace empty `()' placeholders with `(seq)' in the rx form FORM.
 `()' is not a valid rx form, but while typing it is a natural
 placeholder for a form that has not been filled in yet.  Treating
@@ -83,23 +83,23 @@ it as `(seq)' (matching the empty string) keeps the preview alive
 without changing the meaning of any valid form."
   (cond ((null form) '(seq))
         ((consp form) (cons (car form)
-                            (mapcar #'rx-query-replace--fill-empty (cdr form))))
+                            (mapcar #'rxr--fill-empty (cdr form))))
         (t form)))
 
-(defun rx-query-replace--cook-regexp (orig re)
+(defun rxr--cook-regexp (orig re)
   "Around-advice for `reb-cook-regexp' making rx previews tolerant.
 Compiles rx forms with unbalanced parentheses and empty `()'
 placeholders instead of blanking the highlighting while the form
 is under construction."
   (if (eq reb-re-syntax 'rx)
-      (let* ((form (rx-query-replace--recover-read re))
+      (let* ((form (rxr--recover-read re))
              (obj (eval form)))
-        (rx-to-string (rx-query-replace--fill-empty obj)))
+        (rx-to-string (rxr--fill-empty obj)))
     (funcall orig re)))
 
-(advice-add 'reb-cook-regexp :around #'rx-query-replace--cook-regexp)
+(advice-add 'reb-cook-regexp :around #'rxr--cook-regexp)
 
-(defface rx-query-replace-replacement
+(defface rxr-replacement
   '((((class color) (background light))
      :background "palegreen")
     (((class color) (background dark))
@@ -111,18 +111,18 @@ visual-regexp shows the match and its replacement preview in the
 same face, so this distinct face makes the preview recognizable."
   :group 'matching)
 
-(defvar rx-query-replace--vr-session nil
+(defvar rxr--vr-session nil
   "Non-nil while a replacement session drives visual-regexp.")
 
-(defun rx-query-replace--replacement-feedback (orig replacement match-data i)
+(defun rxr--replacement-feedback (orig replacement match-data i)
   "Around-advice for `vr--do-replace-feedback-match-callback'.
 Give the replacement preview its own face, so the match (visual-
 regexp faces) and the would-be replacement (the distinct
-`rx-query-replace-replacement' face) can be told apart.  Only
-affects `rx-query-replace' sessions; plain visual-regexp is
+`rxr-replacement' face) can be told apart.  Only
+affects `rxr-query-replace' sessions; plain visual-regexp is
 unchanged."
   (funcall orig replacement match-data i)
-  (when rx-query-replace--vr-session
+  (when rxr--vr-session
     (let ((ov (vr--get-overlay i 0)))
       (when (overlayp ov)
         (dolist (prop '(after-string display))
@@ -130,12 +130,12 @@ unchanged."
             (when (stringp s)
               (overlay-put ov prop
                            (propertize (substring-no-properties s)
-                                       'face 'rx-query-replace-replacement)))))))))
+                                       'face 'rxr-replacement)))))))))
 
 (advice-add 'vr--do-replace-feedback-match-callback
-            :around #'rx-query-replace--replacement-feedback)
+            :around #'rxr--replacement-feedback)
 
-(defun rx-query-replace--delete-vr-overlays ()
+(defun rxr--delete-vr-overlays ()
   "Delete every visual-regexp overlay from the target buffer.
 `vr--delete-overlays' only clears `vr--visible-overlays', but the
 replacement feedback overlays are only tracked in the
@@ -145,14 +145,14 @@ replacement feedback overlays are only tracked in the
                (delete-overlay ov)))
            vr--overlays))
 
-(defvar rx-query-replace--prev-syntax nil
-  "Value of `reb-re-syntax' before entering `rx-query-replace'.")
+(defvar rxr--prev-syntax nil
+  "Value of `reb-re-syntax' before entering `rxr-query-replace'.")
 
-(defvar-local rx-query-replace--replace-all nil
-  "Whether `rx-query-replace-submit' replaces all matches at once.
-Set by the entry commands `rx-query-replace' and `rx-replace'.")
+(defvar-local rxr--replace-all nil
+  "Whether `rxr-submit' replaces all matches at once.
+Set by the entry commands `rxr-query-replace' and `rxr-replace'.")
 
-(defun rx-query-replace--vr-read-replacement (target from bounds query)
+(defun rxr--vr-read-replacement (target from bounds query)
   "Read a replacement string with visual-regexp live feedback.
 Sets up the visual-regexp internals like `vr--interactive-get-args'
 would (minus reading the regexp), reads the replacement from the
@@ -187,16 +187,16 @@ signal means the input was aborted."
     (setq vr--calling-func nil)
     (vr--delete-overlay-displays)
     (vr--delete-overlays)
-    (rx-query-replace--delete-vr-overlays))
+    (rxr--delete-vr-overlays))
   vr--replace-string)
 
-(defun rx-query-replace--region-bounds (target)
+(defun rxr--region-bounds (target)
   "Return (beg . end) if TARGET shows an active region, else nil."
   (with-current-buffer target
     (when (region-active-p)
       (cons (region-beginning) (region-end)))))
 
-(defun rx-query-replace--ensure-default ()
+(defun rxr--ensure-default ()
   "Replace the initial invalid `'()' with a valid empty rx form.
 The RE Builder starts its buffer with `'()', which is not a valid
 rx form.  Replace it with `'(seq)', a valid form matching the
@@ -206,7 +206,7 @@ empty string, and put point after the opening paren."
     (insert "'(seq)")
     (goto-char (+ 2 (point-min)))))
 
-(defun rx-query-replace--perform (query)
+(defun rxr--perform (query)
   "Run the replacement for the rx form in the RE Builder buffer.
 If QUERY is non-nil, ask for confirmation on every match with
 visual-regexp's query loop; otherwise replace all matches at
@@ -218,12 +218,12 @@ aborted."
   (reb-update-regexp)
   (let* ((target reb-target-buffer)
          (from (buffer-local-value 'reb-regexp target))
-         (bounds (rx-query-replace--region-bounds target)))
+         (bounds (rxr--region-bounds target)))
     (when (string-empty-p from)
       (error "Empty regexp"))
     (condition-case nil
-        (let ((rx-query-replace--vr-session t))
-          (rx-query-replace--vr-read-replacement target from bounds query)
+        (let ((rxr--vr-session t))
+          (rxr--vr-read-replacement target from bounds query)
           (reb-assert-buffer-in-window)
           (select-window reb-target-window)
           ;; `vr--get-replacement' emulates `perform-replace''s
@@ -235,52 +235,52 @@ aborted."
             (if query
                 (vr--perform-query-replace)
               (vr--do-replace)))
-          (rx-query-replace--delete-vr-overlays)
-          (rx-query-replace-quit))
+          (rxr--delete-vr-overlays)
+          (rxr-quit))
       (quit nil))))
 
-(defun rx-query-replace-submit ()
+(defun rxr-submit ()
   "Replace using the rx form in the RE Builder buffer.
 Reads a replacement string with a live preview of every match,
 then runs the replacement in the target buffer.  In
-`rx-query-replace' sessions, every match is confirmed with
-visual-regexp's query loop; in `rx-replace' sessions, all matches
+`rxr-query-replace' sessions, every match is confirmed with
+visual-regexp's query loop; in `rxr-replace' sessions, all matches
 are replaced at once.  The RE Builder window is closed when the
 replacement is done; C-g while entering the replacement aborts
 and keeps the RE Builder open."
   (interactive)
   (condition-case err
-      (rx-query-replace--perform (not rx-query-replace--replace-all))
+      (rxr--perform (not rxr--replace-all))
     (error (message "Invalid rx: %s" (error-message-string err)))))
 
-(defun rx-query-replace-submit-all ()
+(defun rxr-submit-all ()
   "Replace all matches of the rx form at once.
-Like `rx-query-replace-submit', but never asks for confirmation
+Like `rxr-submit', but never asks for confirmation
 on individual matches."
   (interactive)
   (condition-case err
-      (rx-query-replace--perform nil)
+      (rxr--perform nil)
     (error (message "Invalid rx: %s" (error-message-string err)))))
 
-(defun rx-query-replace-quit ()
-  "Quit `rx-query-replace'.
+(defun rxr-quit ()
+  "Quit `rxr-query-replace'.
 Restores the previous RE Builder syntax, deletes the overlays,
 buries the RE Builder and restores the window configuration."
   (interactive)
   (when (buffer-live-p (get-buffer reb-buffer))
     (with-current-buffer (get-buffer reb-buffer)
-      (rx-query-replace-minor-mode -1)
+      (rxr-mode -1)
       (reb-quit)))
-  (when rx-query-replace--prev-syntax
-    (setq reb-re-syntax rx-query-replace--prev-syntax
-          rx-query-replace--prev-syntax nil)))
+  (when rxr--prev-syntax
+    (setq reb-re-syntax rxr--prev-syntax
+          rxr--prev-syntax nil)))
 
-(defun rx-query-replace--enter (replace-all)
+(defun rxr--enter (replace-all)
   "Enter the rx editor for interactive replacement.
 The current buffer becomes the replacement target.  If
-REPLACE-ALL is non-nil, `rx-query-replace-submit' replaces all
+REPLACE-ALL is non-nil, `rxr-submit' replaces all
 matches at once instead of querying."
-  (setq rx-query-replace--prev-syntax reb-re-syntax)
+  (setq rxr--prev-syntax reb-re-syntax)
   (if (and (string= (buffer-name) reb-buffer)
            (reb-mode-buffer-p))
       ;; Already inside the RE Builder: keep its content, just make
@@ -288,54 +288,54 @@ matches at once instead of querying."
       (progn
         (unless (eq reb-re-syntax 'rx)
           (reb-change-syntax 'rx))
-        (setq-local rx-query-replace--replace-all replace-all)
-        (rx-query-replace-minor-mode 1))
+        (setq-local rxr--replace-all replace-all)
+        (rxr-mode 1))
     (setq reb-re-syntax 'rx)
     (re-builder)
     (with-current-buffer (get-buffer reb-buffer)
-      (rx-query-replace--ensure-default)
-      (setq-local rx-query-replace--replace-all replace-all)
-      (rx-query-replace-minor-mode 1))))
+      (rxr--ensure-default)
+      (setq-local rxr--replace-all replace-all)
+      (rxr-mode 1))))
 
 ;;;###autoload
-(defun rx-query-replace ()
+(defun rxr-query-replace ()
   "Interactively construct an rx regexp and query-replace with it.
 Makes the current buffer the \"target\" buffer and displays the
 RE Builder buffer with `rx' syntax in another window.  As you edit
 the rx form there, matches are highlighted in the target buffer.
-Type \\[rx-query-replace-submit] to enter a replacement with a
+Type \\[rxr-submit] to enter a replacement with a
 live preview and then confirm every match,
-\\[rx-query-replace-submit-all] to replace all matches at once,
-or \\[rx-query-replace-quit] to quit.  See also `rx-replace'."
+\\[rxr-submit-all] to replace all matches at once,
+or \\[rxr-quit] to quit.  See also `rxr-replace'."
   (interactive)
-  (rx-query-replace--enter nil))
+  (rxr--enter nil))
 
 ;;;###autoload
-(defun rx-replace ()
+(defun rxr-replace ()
   "Interactively construct an rx regexp and replace its matches.
-Like `rx-query-replace', but \\[rx-query-replace-submit] replaces
+Like `rxr-query-replace', but \\[rxr-submit] replaces
 all matches at once, without confirming every match."
   (interactive)
-  (rx-query-replace--enter t))
+  (rxr--enter t))
 
-(defvar rx-query-replace-mode-map
+(defvar rxr-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-c") #'rx-query-replace-submit)
-    (define-key map (kbd "C-c C-r") #'rx-query-replace-submit-all)
-    (define-key map (kbd "C-c C-k") #'rx-query-replace-quit)
+    (define-key map (kbd "C-c C-c") #'rxr-submit)
+    (define-key map (kbd "C-c C-r") #'rxr-submit-all)
+    (define-key map (kbd "C-c C-k") #'rxr-quit)
     ;; `reb-mode-map' binds `C-c C-c' to `reb-toggle-case'; our minor
     ;; mode overrides it, so offer the toggle on another key.
     (define-key map (kbd "C-c C-t") #'reb-toggle-case)
     map)
-  "Keymap for `rx-query-replace-minor-mode'.")
+  "Keymap for `rxr-mode'.")
 
-(define-minor-mode rx-query-replace-minor-mode
-  "Minor mode for `rx-query-replace', on top of the RE Builder.
-Makes \\[rx-query-replace-submit] run the replacement for the rx
-form in the buffer, and \\[rx-query-replace-quit] quit."
-  :lighter " rx-qr"
-  :keymap rx-query-replace-mode-map)
+(define-minor-mode rxr-mode
+  "Minor mode for `rxr-query-replace', on top of the RE Builder.
+Makes \\[rxr-submit] run the replacement for the rx
+form in the buffer, and \\[rxr-quit] quit."
+  :lighter " rxr"
+  :keymap rxr-mode-map)
 
-(provide 'rx-query-replace)
+(provide 'rxr)
 
-;;; rx-query-replace.el ends here
+;;; rxr.el ends here

@@ -1,17 +1,17 @@
-#+TITLE: rx-query-replace
+#+TITLE: rxr
 #+AUTHOR: Kazure Zheng
 
-* rx-query-replace
+* rxr
 
 用 =rx= 宏编写正则，实时预览匹配结果，输入 replacement 时实时预览替换结果（箭头样式），交互式替换。
 
 两个命令：
 
-- =M-x rx-query-replace= ：确认后对每个匹配 y/n 询问（query replace）
-- =M-x rx-replace= ：确认后一次替换全部匹配（replace all）
+- =M-x rxr-query-replace= ：确认后对每个匹配 y/n 询问（query replace）
+- =M-x rxr-replace= ：确认后一次替换全部匹配（replace all）
 
 #+begin_src text
-M-x rx-query-replace
+M-x rxr-query-replace
         │
         ▼
 ┌────────────────────────────┐
@@ -33,7 +33,7 @@ C-c C-c
 RET 确认
         │
         ▼
-y/n 逐个确认（rx-replace 跳过此步）
+y/n 逐个确认（rxr-replace 跳过此步）
         │
         ▼
 替换完成 → RE-Builder 窗口自动关闭
@@ -74,8 +74,8 @@ C-y
 (require 'visual-regexp)
 
 ;; 本包
-(add-to-list 'load-path "/path/to/rx-replace")
-(require 'rx-query-replace)
+(add-to-list 'load-path "/path/to/rxr")
+(require 'rxr)
 #+end_src
 
 或 use-package：
@@ -84,20 +84,20 @@ C-y
 (use-package visual-regexp
   :load-path "/path/to/visual-regexp")
 
-(use-package rx-query-replace
-  :load-path "/path/to/rx-replace")
+(use-package rxr
+  :load-path "/path/to/rxr")
 #+end_src
 
 依赖：Emacs ≥ 28.1（使用 =re-builder= 的 rx 语法相关内部函数，已验证 30.2）；visual-regexp ≥ 1.1。
 
 * 用法
 
-1. 在想要替换的 buffer 中运行 =M-x rx-query-replace= 或 =M-x rx-replace=。该 buffer 成为替换目标，另一个窗口打开 =*RE-Builder*= buffer，内容为 ='(seq)=。
+1. 在想要替换的 buffer 中运行 =M-x rxr-query-replace= 或 =M-x rxr-replace=。该 buffer 成为替换目标，另一个窗口打开 =*RE-Builder*= buffer，内容为 ='(seq)=。
 2. 在其中编辑 rx 表达式，例如 ='(seq "TODO" (+ blank) (group (+ nonl)))=。每次编辑都会在目标 buffer 中实时高亮所有匹配。
    - *输入容错*：输入过程中未闭合的括号会自动补全（最多 20 个）参与编译；空 =()= 视为 =(seq)= 占位。因此高亮在输入过程中不会消失。
    - 真正的错误（如未知符号 ='(foo)=）照常在 mode-line 报错，不会崩溃。
-3. =C-c C-c=：minibuffer 输入 replacement（支持 =\1= 等分组引用）。*每敲一键，每个匹配后实时显示「 → 替换结果」*（overlay 虚拟预览，目标 buffer 内容并未真正修改）。匹配保持 vr 高亮色，替换预览使用独立的 =rx-query-replace-replacement= face（浅绿背景，可用 =M-x customize-face= 调整），两者易于区分；纯 visual-regexp 会话不受影响。
-   - =RET= 确认：=rx-query-replace= 进入 y/n 逐个确认（每个匹配同样带实时预览）；=rx-replace= 直接替换全部。完成（含 y/n 循环结束）后 RE-Builder 窗口自动关闭。
+3. =C-c C-c=：minibuffer 输入 replacement（支持 =\1= 等分组引用）。*每敲一键，每个匹配后实时显示「 → 替换结果」*（overlay 虚拟预览，目标 buffer 内容并未真正修改）。匹配保持 vr 高亮色，替换预览使用独立的 =rxr-replacement= face（浅绿背景，可用 =M-x customize-face= 调整），两者易于区分；纯 visual-regexp 会话不受影响。
+   - =RET= 确认：=rxr= 进入 y/n 逐个确认（每个匹配同样带实时预览）；=rxr-replace= 直接替换全部。完成（含 y/n 循环结束）后 RE-Builder 窗口自动关闭。
    - =C-g= 取消：只移除预览，回到 rx buffer 继续编辑。
 4. =C-c C-r=：随时以「替换全部」语义执行（与入口命令无关）。
 5. =C-c C-k=（在 rx buffer 中）：直接退出，删高亮、恢复窗口配置和 re-builder 语法设置。
@@ -106,9 +106,9 @@ C-y
 
 | 键 | 命令 | 说明 |
 |-----------+--------------------------------+--------------------------------------------|
-| =C-c C-c= | =rx-query-replace-submit= | 输入 replacement（实时预览），按入口语义替换 |
-| =C-c C-r= | =rx-query-replace-submit-all= | 同上，但直接替换全部，不逐个确认 |
-| =C-c C-k= | =rx-query-replace-quit= | 退出 |
+| =C-c C-c= | =rxr-submit= | 输入 replacement（实时预览），按入口语义替换 |
+| =C-c C-r= | =rxr-submit-all= | 同上，但直接替换全部，不逐个确认 |
+| =C-c C-k= | =rxr-quit= | 退出 |
 | =C-c C-t= | =reb-toggle-case= | 切换大小写敏感（原 re-builder 的 C-c C-c） |
 | =C-c C-w= | =reb-copy= | 复制编译后的 regexp 到 kill-ring |
 | =C-c C-s= | =reb-next-match= | 跳转到下一个匹配 |
@@ -125,7 +125,7 @@ C-y
 | =C-c ?= | =vr--minibuffer-help= | 帮助 |
 | =M-p= / =M-n= | history | 浏览 replacement 历史（=query-replace-to-history=） |
 
-从任意 buffer 再次运行 =M-x rx-query-replace= 会把该 buffer 设为新的替换目标；对同一目标 buffer 重进会自动恢复上次的 rx 表达式。
+从任意 buffer 再次运行 =M-x rxr-query-replace= 会把该 buffer 设为新的替换目标；对同一目标 buffer 重进会自动恢复上次的 rx 表达式。
 
 大小写：高亮预览与替换都遵循目标 buffer 的 =case-fold-search=（默认开启，=C-c C-t= 切换）。与 =query-replace-regexp= 不同，regexp 中出现大写字母不会让替换悄悄切换成大小写敏感——所见即所替。
 
@@ -151,7 +151,7 @@ C-y
 
 * 路线图
 
-- 第二版剩余：=C-c C-e= 导出 regexp 到 kill-ring。（=C-c C-r= 直接替换已交付，并升级为带实时预览的 =rx-replace=）
+- 第二版剩余：=C-c C-e= 导出 regexp 到 kill-ring。（=C-c C-r= 直接替换已交付，并升级为带实时预览的 =rxr-replace=）
 - 第三版：历史已部分达成（vr 的 =query-replace-to-history= + =M-p=）；rx 表达式历史待做。
 - 第四版：replace-string 风格，自动生成 =(rx "foo")=。
 - 第五版：多 buffer（=project-query-replace=，=consult-ripgrep= 集成）。
