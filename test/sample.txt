@@ -1,0 +1,13 @@
+TODO fix the login bug
+TODO review PR #42
+TODO write tests for the parser
+    TODO indented with spaces
+	TODO indented with a tab
+todo lowercase (matches only when case-fold-search is on)
+TODONT no blank after TODO, should not match
+DONE already done, should not match
+
+Variables: foo123 foo456 foo789
+foo12 only two digits
+almostfoo123 foo appears mid-word
+foo alone, no digits, should not match
