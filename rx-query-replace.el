@@ -135,6 +135,16 @@ unchanged."
 (advice-add 'vr--do-replace-feedback-match-callback
             :around #'rx-query-replace--replacement-feedback)
 
+(defun rx-query-replace--delete-vr-overlays ()
+  "Delete every visual-regexp overlay from the target buffer.
+`vr--delete-overlays' only clears `vr--visible-overlays', but the
+replacement feedback overlays are only tracked in the
+`vr--overlays' hash table, so sweep that too."
+  (maphash (lambda (_ij ov)
+             (when (overlay-buffer ov)
+               (delete-overlay ov)))
+           vr--overlays))
+
 (defvar rx-query-replace--prev-syntax nil
   "Value of `reb-re-syntax' before entering `rx-query-replace'.")
 
@@ -172,7 +182,8 @@ signal means the input was aborted."
     (remove-hook 'minibuffer-setup-hook #'vr--minibuffer-setup)
     (setq vr--calling-func nil)
     (vr--delete-overlay-displays)
-    (vr--delete-overlays))
+    (vr--delete-overlays)
+    (rx-query-replace--delete-vr-overlays))
   vr--replace-string)
 
 (defun rx-query-replace--region-bounds (target)
@@ -220,6 +231,7 @@ aborted."
             (if query
                 (vr--perform-query-replace)
               (vr--do-replace)))
+          (rx-query-replace--delete-vr-overlays)
           (rx-query-replace-quit))
       (quit nil))))
 
