@@ -89,7 +89,7 @@ error if the rx form is invalid or compiles to an empty regexp."
 (defun rx-query-replace-submit ()
   "Query-replace using the rx form in the RE Builder buffer.
 Reads a replacement string and runs `perform-replace' in the
-target buffer, highlighting every match."
+target buffer, asking for confirmation on every match."
   (interactive)
   (condition-case err
       (rx-query-replace--perform)
