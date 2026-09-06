@@ -55,6 +55,50 @@
 (require 'rx)
 (require 'visual-regexp)
 
+(defconst rx-query-replace-max-paren-recovery 20
+  "Maximum number of closing parens tried by rx form recovery.")
+
+(defun rx-query-replace--recover-read (re)
+  "Read RE as an rx form, closing unbalanced parentheses.
+While an rx form is being typed it is often temporarily
+unbalanced.  Try appending up to
+`rx-query-replace-max-paren-recovery' closing parens and return
+the first form that parses.  Signal the original error if all
+attempts fail."
+  (condition-case orig-err
+      (car (read-from-string re))
+    (error
+     (or (cl-loop for n from 1 to rx-query-replace-max-paren-recovery
+                  for form = (ignore-errors
+                               (car (read-from-string
+                                     (concat re (make-string n ?\))))))
+                  when form return form)
+         (signal (car orig-err) (cdr orig-err))))))
+
+(defun rx-query-replace--fill-empty (form)
+  "Replace empty `()' placeholders with `(seq)' in the rx form FORM.
+`()' is not a valid rx form, but while typing it is a natural
+placeholder for a form that has not been filled in yet.  Treating
+it as `(seq)' (matching the empty string) keeps the preview alive
+without changing the meaning of any valid form."
+  (cond ((null form) '(seq))
+        ((consp form) (cons (car form)
+                            (mapcar #'rx-query-replace--fill-empty (cdr form))))
+        (t form)))
+
+(defun rx-query-replace--cook-regexp (orig re)
+  "Around-advice for `reb-cook-regexp' making rx previews tolerant.
+Compiles rx forms with unbalanced parentheses and empty `()'
+placeholders instead of blanking the highlighting while the form
+is under construction."
+  (if (eq reb-re-syntax 'rx)
+      (let* ((form (rx-query-replace--recover-read re))
+             (obj (eval form)))
+        (rx-to-string (rx-query-replace--fill-empty obj)))
+    (funcall orig re)))
+
+(advice-add 'reb-cook-regexp :around #'rx-query-replace--cook-regexp)
+
 (defvar rx-query-replace--prev-syntax nil
   "Value of `reb-re-syntax' before entering `rx-query-replace'.")
 
