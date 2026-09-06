@@ -77,7 +77,13 @@ error if the rx form is invalid or compiles to an empty regexp."
     ;; The preview highlights all matches from `point-min', so start
     ;; replacing there too (an active region still limits the replace).
     (goto-char (point-min))
-    (perform-replace from to t t nil)
+    ;; `perform-replace' silently switches to case-sensitive matching
+    ;; when the regexp contains upper-case letters (`search-upper-case'),
+    ;; but the preview does not.  Bind it to nil so the replacement
+    ;; always follows the preview, i.e. the target buffer's
+    ;; `case-fold-search' (toggle with `reb-toggle-case').
+    (let ((search-upper-case nil))
+      (perform-replace from to t t nil))
     ;; Replacing edited the target buffer; refresh the highlights so
     ;; the preview matches reality, then return to the RE Builder.
     (with-current-buffer (get-buffer reb-buffer)
