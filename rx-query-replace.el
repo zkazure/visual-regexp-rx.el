@@ -51,6 +51,102 @@
 (defvar rx-query-replace--prev-syntax nil
   "Value of `reb-re-syntax' before entering `rx-query-replace'.")
 
+(defvar-local rx-query-replace--replace-all nil
+  "Whether `rx-query-replace-submit' replaces all matches at once.
+Set by the entry commands `rx-query-replace' and `rx-replace'.")
+
+(defvar rx-query-replace--preview-overlays nil
+  "Overlays showing the live replacement preview in the target buffer.")
+
+(defvar rx-query-replace--minibuffer-state nil
+  "Plist with the context of the replacement minibuffer session.
+Holds :target, :from and :bounds.")
+
+(defvar rx-query-replace-minibuffer-keymap
+  (let ((map (copy-keymap minibuffer-local-map)))
+    (define-key map (kbd "C-c C-c") #'exit-minibuffer)
+    (define-key map (kbd "C-c C-k") #'keyboard-quit)
+    map)
+  "Keymap used while entering the replacement string.")
+
+(defun rx-query-replace--delete-preview-overlays ()
+  "Delete all replacement preview overlays."
+  (dolist (ov rx-query-replace--preview-overlays)
+    (when (overlay-buffer ov)
+      (delete-overlay ov)))
+  (setq rx-query-replace--preview-overlays nil))
+
+(defun rx-query-replace--update-preview (&optional replacement)
+  "Show the replacement preview in the target buffer.
+REPLACEMENT defaults to the minibuffer contents.  Creates an
+overlay on every match, displaying the would-be replacement
+without modifying the buffer."
+  (let* ((state rx-query-replace--minibuffer-state)
+         (replacement (or replacement (minibuffer-contents-no-properties)))
+         (target (plist-get state :target))
+         (from (plist-get state :from))
+         (bounds (plist-get state :bounds))
+         (limit (or reb-auto-match-limit most-positive-fixnum)))
+    (rx-query-replace--delete-preview-overlays)
+    (condition-case err
+        (save-excursion
+          (with-current-buffer target
+            (goto-char (or (car bounds) (point-min)))
+            (let ((case-fold-search case-fold-search)
+                  (nocasify (not (and case-replace case-fold-search)))
+                  (count 0))
+              (while (and (not (eobp))
+                          (< count limit)
+                          (re-search-forward from (or (cdr bounds) (point-max)) t))
+                ;; Don't get stuck on zero-width matches.
+                (when (and (= (match-beginning 0) (match-end 0))
+                           (not (eobp)))
+                  (forward-char 1))
+                (let* ((repl (match-substitute-replacement replacement nocasify nil))
+                       (ov (make-overlay (match-beginning 0) (match-end 0) target)))
+                  (overlay-put ov 'priority 1001)
+                  (if (= (match-beginning 0) (match-end 0))
+                      (overlay-put ov 'after-string (propertize repl 'face 'reb-match-0))
+                    (overlay-put ov 'display (propertize repl 'face 'reb-match-0)))
+                  (push ov rx-query-replace--preview-overlays))
+                (setq count (1+ count))))))
+      (error (minibuffer-message (format " %s" (error-message-string err)))))))
+
+(defun rx-query-replace--after-change (&rest _)
+  "Update the replacement preview when the minibuffer changes."
+  (when (and rx-query-replace--minibuffer-state (minibufferp))
+    ;; Browsing the history momentarily empties the minibuffer; skip
+    ;; that flicker (same guard as visual-regexp).
+    (unless (and (string= "" (minibuffer-contents-no-properties))
+                 (eq last-command 'previous-history-element))
+      (rx-query-replace--update-preview))))
+
+(defun rx-query-replace--read-replacement (target from bounds)
+  "Read a replacement string, previewing it live in TARGET.
+FROM is the compiled regexp and BOUNDS the region limits, or nil
+for the whole buffer.  While the user types, the would-be
+replacement is shown as overlays on every match, without
+modifying TARGET.  A normal return means the replacement was
+confirmed; a `quit' signal means it was aborted."
+  (setq rx-query-replace--minibuffer-state
+        (list :target target :from from :bounds bounds))
+  (unwind-protect
+      (minibuffer-with-setup-hook
+          (lambda ()
+            (add-hook 'after-change-functions #'rx-query-replace--after-change nil t)
+            (rx-query-replace--update-preview))
+        (read-from-minibuffer "Replace with: " nil
+                              rx-query-replace-minibuffer-keymap
+                              nil 'rx-query-replace-replacement-history))
+    (rx-query-replace--delete-preview-overlays)
+    (setq rx-query-replace--minibuffer-state nil)))
+
+(defun rx-query-replace--region-bounds (target)
+  "Return (beg . end) if TARGET shows an active region, else nil."
+  (with-current-buffer target
+    (when (region-active-p)
+      (cons (region-beginning) (region-end)))))
+
 (defun rx-query-replace--ensure-default ()
   "Replace the initial invalid `'()' with a valid empty rx form.
 The RE Builder starts its buffer with `'()', which is not a valid
