@@ -102,6 +102,30 @@
       (vr/rx--minibuffer-setup)
       (should (equal (buffer-string) "")))))
 
+(ert-deftest vrx-tests-fill-empty-toplevel ()
+  "An empty placeholder compiles as (seq)."
+  (let ((vr/engine 'rx))
+    (should (equal (vr/rx--get-regexp-string
+                    (lambda (&optional _) "()"))
+                   (rx-to-string '(seq))))))
+
+(ert-deftest vrx-tests-fill-empty-nested ()
+  "Nested empty placeholders compile while keeping the form."
+  (let ((vr/engine 'rx))
+    (should (equal (vr/rx--get-regexp-string
+                    (lambda (&optional _) "(seq \"TODO\" ())"))
+                   (rx-to-string '(seq "TODO"))))
+    (should (equal (vr/rx--get-regexp-string
+                    (lambda (&optional _) "(seq \"a\" (group ()))"))
+                   (rx-to-string '(seq "a" (group (seq))))))))
+
+(ert-deftest vrx-tests-fill-empty-preserves-valid ()
+  "Valid forms without placeholders are unchanged."
+  (should (equal (vr/rx--fill-empty '(seq "a" (+ digit)))
+                 '(seq "a" (+ digit))))
+  (should (equal (vr/rx--fill-empty nil) '(seq)))
+  (should (equal (vr/rx--fill-empty "string") "string")))
+
 (ert-deftest vrx-tests-engine-bound-during-args-read ()
   "The rx engine is bound while the interactive args are read.
 Regression: the entry points must use let* so `vr/engine' is

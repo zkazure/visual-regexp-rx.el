@@ -64,6 +64,16 @@ form and compiles it with `rx-to-string'."
 
 ;;; Compile rx input
 
+(defun vr/rx--fill-empty (form)
+  "Replace empty `()' placeholders in FORM with `(seq)'.
+Nested empty lists become `(seq)' too, so `(seq \"TODO\" ())'
+compiles instead of erroring out while the form is under
+construction."
+  (cond
+   ((null form) '(seq))
+   ((consp form) (mapcar #'vr/rx--fill-empty form))
+   (t form)))
+
 (defun vr/rx--get-regexp-string (orig &optional for-display)
   "Compile the input as an rx form when `vr/engine' is `rx'.
 ORIG is the original `vr--get-regexp-string'.  FOR-DISPLAY, when
@@ -72,7 +82,7 @@ input is kept."
   (let ((regexp (funcall orig for-display)))
     (if (and (not for-display) (eq vr/engine 'rx))
         (condition-case err
-            (rx-to-string (read regexp))
+            (rx-to-string (vr/rx--fill-empty (read regexp)))
           (invalid-regexp (signal (car err) (cdr err))) ; rethrow unchanged
           (error (signal 'invalid-regexp (list "Invalid rx form"))))
       regexp)))
