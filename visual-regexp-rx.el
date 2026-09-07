@@ -72,17 +72,17 @@ visual-regexp's own commands, e.g. (setq vr/engine 'rx)."
 
 ;;; Compile rx input
 
-(defun vr/rx--fill-empty (form)
+(defun visual-regexp-rx--fill-empty (form)
   "Replace empty `()' placeholders in FORM with `(seq)'.
 Nested empty lists become `(seq)' too, so `(seq \"TODO\" ())'
 compiles instead of erroring out while the form is under
 construction."
   (cond
    ((null form) '(seq))
-   ((consp form) (mapcar #'vr/rx--fill-empty form))
+   ((consp form) (mapcar #'visual-regexp-rx--fill-empty form))
    (t form)))
 
-(defun vr/rx--get-regexp-string (orig &optional for-display)
+(defun visual-regexp-rx--get-regexp-string (orig &optional for-display)
   "Compile the input as an rx form when `vr/engine' is `rx'.
 ORIG is the original `vr--get-regexp-string'.  FOR-DISPLAY, when
 non-nil, means the string is only shown, not used, so the raw
@@ -90,16 +90,16 @@ input is kept."
   (let ((regexp (funcall orig for-display)))
     (if (and (not for-display) (eq vr/engine 'rx))
         (condition-case err
-            (rx-to-string (vr/rx--fill-empty (read regexp)))
+            (rx-to-string (visual-regexp-rx--fill-empty (read regexp)))
           (invalid-regexp (signal (car err) (cdr err))) ; rethrow unchanged
           (error (signal 'invalid-regexp (list "Invalid rx form"))))
       regexp)))
 
-(advice-add 'vr--get-regexp-string :around #'vr/rx--get-regexp-string)
+(advice-add 'vr--get-regexp-string :around #'visual-regexp-rx--get-regexp-string)
 
 ;;; Prefill the rx form
 
-(defun vr/rx--minibuffer-setup ()
+(defun visual-regexp-rx--minibuffer-setup ()
   "Prefill `(seq \"\")' on the regexp minibuffer in rx mode.
 Point is left between the quotes, ready for typing."
   (when (and (eq vr/engine 'rx)
@@ -107,7 +107,7 @@ Point is left between the quotes, ready for typing."
     (insert "(seq \"\")")
     (goto-char (- (point-max) 2)))) ; point between the quotes
 
-(add-hook 'minibuffer-setup-hook #'vr/rx--minibuffer-setup)
+(add-hook 'minibuffer-setup-hook #'visual-regexp-rx--minibuffer-setup)
 
 (provide 'visual-regexp-rx)
 ;;; visual-regexp-rx.el ends here

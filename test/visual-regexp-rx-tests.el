@@ -35,40 +35,40 @@
 
 (ert-deftest vrx-tests-advice-installed ()
   "The around advice is installed on `vr--get-regexp-string'."
-  (should (advice-member-p #'vr/rx--get-regexp-string 'vr--get-regexp-string)))
+  (should (advice-member-p #'visual-regexp-rx--get-regexp-string 'vr--get-regexp-string)))
 
 (ert-deftest vrx-tests-converts-rx-form ()
   "With the rx engine, an rx form compiles to its regexp string."
   (let ((vr/engine 'rx))
-    (should (equal (vr/rx--get-regexp-string
+    (should (equal (visual-regexp-rx--get-regexp-string
                     (lambda (&optional _) "(seq \"a\" (+ digit))"))
                    (rx-to-string '(seq "a" (+ digit)))))))
 
 (ert-deftest vrx-tests-passthrough-emacs-engine ()
   "With the emacs engine, input is left untouched."
   (let ((vr/engine 'emacs))
-    (should (equal (vr/rx--get-regexp-string
+    (should (equal (visual-regexp-rx--get-regexp-string
                     (lambda (&optional _) "(seq \"a\" (+ digit))"))
                    "(seq \"a\" (+ digit))"))))
 
 (ert-deftest vrx-tests-passthrough-for-display ()
   "Display strings keep the raw input even with the rx engine."
   (let ((vr/engine 'rx))
-    (should (equal (vr/rx--get-regexp-string
+    (should (equal (visual-regexp-rx--get-regexp-string
                     (lambda (&optional _) "(seq \"a\")") t)
                    "(seq \"a\")"))))
 
 (ert-deftest vrx-tests-unbalanced-input-signals ()
   "Unbalanced input signals `invalid-regexp'."
   (let ((vr/engine 'rx))
-    (should-error (vr/rx--get-regexp-string
+    (should-error (visual-regexp-rx--get-regexp-string
                    (lambda (&optional _) "(seq \"a\""))
                   :type 'invalid-regexp)))
 
 (ert-deftest vrx-tests-unknown-keyword-signals ()
   "Unknown rx keywords signal `invalid-regexp'."
   (let ((vr/engine 'rx))
-    (should-error (vr/rx--get-regexp-string
+    (should-error (visual-regexp-rx--get-regexp-string
                    (lambda (&optional _) "(foo)"))
                   :type 'invalid-regexp)))
 
@@ -77,7 +77,7 @@
   (let ((vr/engine 'rx)
         (vr--in-minibuffer 'vr--minibuffer-regexp))
     (with-temp-buffer
-      (vr/rx--minibuffer-setup)
+      (visual-regexp-rx--minibuffer-setup)
       (should (equal (buffer-string) "(seq \"\")"))
       (should (= (point) 7)))))
 
@@ -86,7 +86,7 @@
   (let ((vr/engine 'emacs)
         (vr--in-minibuffer 'vr--minibuffer-regexp))
     (with-temp-buffer
-      (vr/rx--minibuffer-setup)
+      (visual-regexp-rx--minibuffer-setup)
       (should (equal (buffer-string) "")))))
 
 (ert-deftest vrx-tests-no-prefill-replace-stage ()
@@ -94,32 +94,32 @@
   (let ((vr/engine 'rx)
         (vr--in-minibuffer 'vr--minibuffer-replace))
     (with-temp-buffer
-      (vr/rx--minibuffer-setup)
+      (visual-regexp-rx--minibuffer-setup)
       (should (equal (buffer-string) "")))))
 
 (ert-deftest vrx-tests-fill-empty-toplevel ()
   "An empty placeholder compiles as (seq)."
   (let ((vr/engine 'rx))
-    (should (equal (vr/rx--get-regexp-string
+    (should (equal (visual-regexp-rx--get-regexp-string
                     (lambda (&optional _) "()"))
                    (rx-to-string '(seq))))))
 
 (ert-deftest vrx-tests-fill-empty-nested ()
   "Nested empty placeholders compile while keeping the form."
   (let ((vr/engine 'rx))
-    (should (equal (vr/rx--get-regexp-string
+    (should (equal (visual-regexp-rx--get-regexp-string
                     (lambda (&optional _) "(seq \"TODO\" ())"))
                    (rx-to-string '(seq "TODO"))))
-    (should (equal (vr/rx--get-regexp-string
+    (should (equal (visual-regexp-rx--get-regexp-string
                     (lambda (&optional _) "(seq \"a\" (group ()))"))
                    (rx-to-string '(seq "a" (group (seq))))))))
 
 (ert-deftest vrx-tests-fill-empty-preserves-valid ()
   "Valid forms without placeholders are unchanged."
-  (should (equal (vr/rx--fill-empty '(seq "a" (+ digit)))
+  (should (equal (visual-regexp-rx--fill-empty '(seq "a" (+ digit)))
                  '(seq "a" (+ digit))))
-  (should (equal (vr/rx--fill-empty nil) '(seq)))
-  (should (equal (vr/rx--fill-empty "string") "string")))
+  (should (equal (visual-regexp-rx--fill-empty nil) '(seq)))
+  (should (equal (visual-regexp-rx--fill-empty "string") "string")))
 
 (provide 'visual-regexp-rx-tests)
 ;;; visual-regexp-rx-tests.el ends here

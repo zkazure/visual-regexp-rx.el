@@ -44,6 +44,13 @@ jobs:
           emacs -Q --batch -L . \
             --eval "(progn (require 'package) (package-initialize))" \
             --eval "(progn (require 'package-lint)
+                           ;; `vr/engine' is a shared defcustom with visual-regexp-steroids.
+                           (setq package-lint--allowed-prefix-mappings
+                                 (cons '(\"visual-regexp-rx\" . (\"vr/\"))
+                                       package-lint--allowed-prefix-mappings))
+                           (setq package-lint--sane-prefixes
+                                 (replace-regexp-in-string \"\\\\`\\\\(?:\" \"\\\\`\\\\(?:vr/\\\\|\"
+                                                           package-lint--sane-prefixes t t))
                            (find-file \"visual-regexp-rx.el\")
                            (let ((issues (package-lint-buffer)))
                              (if issues
