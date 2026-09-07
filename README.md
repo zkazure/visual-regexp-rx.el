@@ -59,19 +59,6 @@ To customize, use `M-x customize-group [RET] visual-regexp`.  The `rx` choice
 is added to `vr/engine`; when visual-regexp-steroids is installed, its
 existing option is extended instead.
 
-## Minibuffer shortcuts
-
-These are visual-regexp's own shortcuts, unchanged by this package:
-
-| key         | command                       | description                                                 |
-|-------------|-------------------------------|-------------------------------------------------------------|
-| `RET`       | `exit-minibuffer`             | confirm the replacement                                     |
-| `C-g`       | `keyboard-quit`               | abort                                                       |
-| `C-c p`     | `vr--shortcut-toggle-preview` | toggle preview style: arrow (match → result) / plain result |
-| `C-c a`     | `vr--shortcut-toggle-limit`   | toggle feedback limit (default 50 / all matches)            |
-| `C-c ?`     | `vr--minibuffer-help`         | help                                                        |
-| `M-p`/`M-n` | history                       | browse replacement history                                  |
-
 ## How it works
 
 One around advice and one prefill hook (about 100 lines), no new commands:
