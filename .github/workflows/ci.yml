@@ -50,7 +50,7 @@ jobs:
           emacs -Q --batch -L . \
             --eval "(progn (require 'package) (package-initialize))" \
             --eval "(progn (find-file \"visual-regexp-rx.el\")
-                           (let ((warnings (checkdoc-eval-current-buffer t)))
+                           (let ((warnings (checkdoc-current-buffer t)))
                              (if warnings
                                  (progn
                                    (princ (format \"checkdoc issues:\n%s\n\" warnings))
