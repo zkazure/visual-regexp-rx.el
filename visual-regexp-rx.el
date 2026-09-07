@@ -27,15 +27,20 @@
 
 ;; Extends visual-regexp to support rx notation, the way
 ;; visual-regexp-steroids extends it to support PCRE (Python
-;; regular expressions).  Select the rx engine and type an rx form
-;; in the minibuffer instead of a regexp string:
+;; regular expressions).  Select the rx engine once:
 
-;;   M-x vr/rx-query-replace
+;;   (setq vr/engine 'rx)
+
+;; and type an rx form in the minibuffer instead of a regexp
+;; string when running visual-regexp's own commands:
+
+;;   M-x vr/query-replace
 ;;   (seq "TODO" (+ blank) (group (+ nonl)))
 
 ;; The form is compiled to a regexp string with `rx-to-string' and
 ;; handed to visual-regexp, so the live preview, the query loop and
-;; all minibuffer shortcuts are unchanged.
+;; all minibuffer shortcuts are unchanged.  Set `vr/engine' back to
+;; `emacs' for plain visual-regexp behavior.
 
 ;;; Code:
 
@@ -58,7 +63,10 @@
   (defcustom vr/engine 'emacs
     "Regexp engine used by visual-regexp.
 `emacs' uses plain Emacs regexps; `rx' reads the input as an rx
-form and compiles it with `rx-to-string'."
+form and compiles it with `rx-to-string'.
+
+Set this to `rx' in your init file to use rx notation with
+visual-regexp's own commands, e.g. (setq vr/engine 'rx)."
     :type '(choice (const emacs) (const rx))
     :group 'visual-regexp))
 
@@ -100,33 +108,6 @@ Point is left between the quotes, ready for typing."
     (goto-char (- (point-max) 2)))) ; point between the quotes
 
 (add-hook 'minibuffer-setup-hook #'vr/rx--minibuffer-setup)
-
-;;; Entry points
-
-;;;###autoload
-(defun vr/rx-query-replace ()
-  "Run `vr/query-replace' with the rx engine."
-  (interactive)
-  ;; let* (not let): the engine must be bound before the interactive
-  ;; args are read, so the regexp minibuffer preview already compiles
-  ;; the input as rx.
-  (let* ((vr/engine 'rx)
-         (args (vr--interactive-get-args 'vr--mode-regexp-replace
-                                         'vr--calling-func-query-replace)))
-    ;; ARGS is nil when the input was aborted; call-interactively would
-    ;; then invoke the command with zero arguments and error out.
-    (when args
-      (apply #'vr/query-replace args))))
-
-;;;###autoload
-(defun vr/rx-replace ()
-  "Run `vr/replace' with the rx engine."
-  (interactive)
-  (let* ((vr/engine 'rx)
-         (args (vr--interactive-get-args 'vr--mode-regexp-replace
-                                         'vr--calling-func-replace)))
-    (when args
-      (apply #'vr/replace args))))
 
 (provide 'visual-regexp-rx)
 ;;; visual-regexp-rx.el ends here

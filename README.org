@@ -6,7 +6,7 @@
 =visual-regexp= 的 =rx= 引擎扩展——如同 =visual-regexp-steroids= 之于 PCRE。在 minibuffer 里直接输入 =rx= 形式的 Lisp 结构代替 regexp 字符串，其余（实时预览、y/n 确认、全部 minibuffer 快捷键）都是 visual-regexp 原生体验。
 
 #+begin_src text
-M-x vr/rx-query-replace
+M-x vr/query-replace
         │
         ▼
 Query replace regexp: (seq "TODO" (+ blank) (group (+ nonl)))
@@ -16,16 +16,25 @@ Query replace regexp: (seq "TODO" (+ blank) (group (+ nonl)))
 （每敲一键，每个匹配后实时显示 → 替换结果）
         │
         ▼
-RET 确认 → y/n 逐个确认（vr/rx-replace 跳过此步）
+RET 确认 → y/n 逐个确认（vr/replace 跳过此步）
 #+end_src
 
 * 用法
 
-- =M-x vr/rx-query-replace= ：用 rx 引擎运行 =vr/query-replace=。
-- =M-x vr/rx-replace= ：同上，一次替换全部匹配。
-- 或者 =(setq vr/engine 'rx)= 后直接使用原版 =M-x vr/query-replace= / =M-x vr/replace=；改回 ='emacs= 恢复普通行为。
+在 init.el 里选择引擎（一次性配置）：
 
-minibuffer 内输入裸 list（无需 quote）：=(seq "TODO" (+ blank) (group (+ nonl)))=，按 =read= 解析后交给 =rx-to-string= 编译。输入不是合法 rx form 时按 visual-regexp 的既有方式报 =invalid-regexp=。
+#+begin_src elisp
+(setq vr/engine 'rx)
+#+end_src
+
+之后直接使用原版 visual-regexp 命令：
+
+- =M-x vr/query-replace= ：每个匹配 y/n 逐个确认（query replace）
+- =M-x vr/replace= ：一次替换全部匹配
+
+改回 =(setq vr/engine 'emacs)= 即恢复普通 regexp 行为。
+
+minibuffer 打开时预填 =(seq "")= 且光标停在双引号中间，直接打字即可；输入裸 list（无需 quote）：=(seq "TODO" (+ blank) (group (+ nonl)))=，按 =read= 解析后交给 =rx-to-string= 编译。输入不是合法 rx form 时按 visual-regexp 的既有方式报 =invalid-regexp=；空 =()= 占位在输入过程中自动视为 =(seq)=，保证高亮不中断。
 
 minibuffer 快捷键（visual-regexp 原生，未做任何改动）：
 
@@ -74,11 +83,13 @@ minibuffer 快捷键（visual-regexp 原生，未做任何改动）：
 
 * 实现原理
 
-一个 around advice，一条转换函数（约 40 行）：
+一条 around advice、一个预填 hook（约 100 行）：
 
-- =advice-add 'vr--get-regexp-string :around= ：在 visual-regexp 拿到 minibuffer 输入之后、编译使用之前，当 =vr/engine= 为 =rx= 时把输入 =read= 为 Lisp 结构并交给 =rx-to-string=。
+- =advice-add 'vr--get-regexp-string :around= ：在 visual-regexp 拿到 minibuffer 输入之后、编译使用之前，当 =vr/engine= 为 =rx= 时把输入 =read= 为 Lisp 结构并交给 =rx-to-string=；空 =()= 占位先递归替换为 =(seq)=。
 - =for-display= 为 t 的调用（仅显示用途）不转换，保持用户输入的 rx 原文。
+- =minibuffer-setup-hook= ：=rx= 引擎下 regexp 输入预填 =(seq "")= 且光标停在双引号中间。
 - 转换错误转成 =invalid-regexp=，由 visual-regexp 的既有错误显示处理。
+- 本包不定义任何命令——引擎开关即全部接口，命令仍是 =vr/query-replace= / =vr/replace=。
 
 * 限制
 
