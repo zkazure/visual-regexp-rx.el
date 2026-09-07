@@ -102,5 +102,29 @@
       (vr/rx--minibuffer-setup)
       (should (equal (buffer-string) "")))))
 
+(ert-deftest vrx-tests-engine-bound-during-args-read ()
+  "The rx engine is bound while the interactive args are read.
+Regression: the entry points must use let* so `vr/engine' is
+already rx when `vr--interactive-get-args' runs the minibuffer
+(Emacs `let' evaluates every init form before binding)."
+  (let ((seen nil)
+        (vr--minibuffer-message-overlay (make-overlay 1 1)))
+    (advice-add 'vr--set-regexp-string :around
+                (lambda (orig &rest _) (setq seen vr/engine) "")
+                '((name . vrx-test-intercept)))
+    (advice-add 'vr--set-replace-string :around
+                (lambda (orig &rest _) "")
+                '((name . vrx-test-intercept-replace)))
+    (advice-add 'vr/replace :around
+                (lambda (orig &rest _) nil)
+                '((name . vrx-test-intercept-replace-exec)))
+    (unwind-protect
+        (progn
+          (vr/rx-replace)
+          (should (eq seen 'rx)))
+      (advice-remove 'vr--set-regexp-string 'vrx-test-intercept)
+      (advice-remove 'vr--set-replace-string 'vrx-test-intercept-replace)
+      (advice-remove 'vr/replace 'vrx-test-intercept-replace-exec))))
+
 (provide 'visual-regexp-rx-tests)
 ;;; visual-regexp-rx-tests.el ends here

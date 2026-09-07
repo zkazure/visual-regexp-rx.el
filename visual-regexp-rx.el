@@ -97,9 +97,12 @@ Point is left between the quotes, ready for typing."
 (defun vr/rx-query-replace ()
   "Run `vr/query-replace' with the rx engine."
   (interactive)
-  (let ((vr/engine 'rx)
-        (args (vr--interactive-get-args 'vr--mode-regexp-replace
-                                        'vr--calling-func-query-replace)))
+  ;; let* (not let): the engine must be bound before the interactive
+  ;; args are read, so the regexp minibuffer preview already compiles
+  ;; the input as rx.
+  (let* ((vr/engine 'rx)
+         (args (vr--interactive-get-args 'vr--mode-regexp-replace
+                                         'vr--calling-func-query-replace)))
     ;; ARGS is nil when the input was aborted; call-interactively would
     ;; then invoke the command with zero arguments and error out.
     (when args
@@ -109,9 +112,9 @@ Point is left between the quotes, ready for typing."
 (defun vr/rx-replace ()
   "Run `vr/replace' with the rx engine."
   (interactive)
-  (let ((vr/engine 'rx)
-        (args (vr--interactive-get-args 'vr--mode-regexp-replace
-                                        'vr--calling-func-replace)))
+  (let* ((vr/engine 'rx)
+         (args (vr--interactive-get-args 'vr--mode-regexp-replace
+                                         'vr--calling-func-replace)))
     (when args
       (apply #'vr/replace args))))
 
