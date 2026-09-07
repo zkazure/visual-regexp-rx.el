@@ -49,9 +49,10 @@ jobs:
                              (if issues
                                  (progn
                                    (dolist (i issues)
-                                     (princ (format \"%s\n\" (package-lint-issue-text i))))
+                                     (princ (format \"%d:%d: %s: %s\\n\"
+                                                    (nth 0 i) (nth 1 i) (nth 2 i) (nth 3 i))))
                                    (kill-emacs 1))
-                               (princ \"package-lint: clean\n\"))))"
+                               (princ \"package-lint: clean\\n\"))))"
 
       - name: checkdoc
         run: |
