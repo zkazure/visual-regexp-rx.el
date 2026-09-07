@@ -52,8 +52,8 @@
 (defvar vr/engine)
 ;; Stage flag set by visual-regexp while the minibuffer is open.
 (defvar vr--in-minibuffer)
-;; Non-nil once the rx regexp minibuffer has been prefilled; the
-;; suppression itself is gated by a content check on the input.
+;; Non-nil while the rx regexp minibuffer still holds the unedited
+;; prefill; cleared by the first edit.
 (defvar visual-regexp-rx--pristine nil)
 
 ;;; The rx engine (shares `vr/engine' with visual-regexp-steroids)
@@ -114,6 +114,13 @@ instead of flooding the buffer with zero-width highlights."
 
 ;;; Prefill the rx form
 
+(defun visual-regexp-rx--clear-pristine (&rest _)
+  "Clear `visual-regexp-rx--pristine' after the first edit.
+Runs on `before-change-functions' of the regexp minibuffer and
+removes itself afterwards."
+  (setq visual-regexp-rx--pristine nil)
+  (remove-hook 'before-change-functions #'visual-regexp-rx--clear-pristine t))
+
 (defun visual-regexp-rx--minibuffer-setup ()
   "Prefill `(seq \"\")' on the regexp minibuffer in rx mode.
 Point is left between the quotes, ready for typing.  Until the
@@ -122,13 +129,22 @@ regexp, so the first rendering highlights nothing."
   (if (and (eq vr/engine 'rx)
            (eq vr--in-minibuffer 'vr--minibuffer-regexp))
       (progn
+        ;; Drop a leftover one-shot hook from an aborted session
+        ;; before the prefill insert, so it cannot clear the flag on
+        ;; the insert itself.
+        (remove-hook 'before-change-functions #'visual-regexp-rx--clear-pristine t)
         ;; Set before the insert: visual-regexp's own after-change
         ;; function already runs during the insert and renders the
         ;; first feedback with this flag.
         (setq visual-regexp-rx--pristine t)
         (insert "(seq \"\")")
-        (goto-char (- (point-max) 2))) ; point between the quotes
-    (setq visual-regexp-rx--pristine nil)))
+        (goto-char (- (point-max) 2)) ; point between the quotes
+        ;; Clear on the first edit, not on the prefill insert itself.
+        (add-hook 'before-change-functions #'visual-regexp-rx--clear-pristine
+                  nil t))
+    (progn
+      (setq visual-regexp-rx--pristine nil)
+      (remove-hook 'before-change-functions #'visual-regexp-rx--clear-pristine t))))
 
 (add-hook 'minibuffer-setup-hook #'visual-regexp-rx--minibuffer-setup)
 

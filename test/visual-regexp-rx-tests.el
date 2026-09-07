@@ -95,17 +95,43 @@
                      visual-regexp-rx--unmatchable)))))
 
 (ert-deftest vrx-tests-edited-prefill-native ()
-  "Editing the prefill compiles natively, pristine flag or not."
+  "Editing the prefill clears the flag and compiles natively."
   (let ((vr/engine 'rx)
         (vr--in-minibuffer 'vr--minibuffer-regexp)
         (visual-regexp-rx--pristine nil))
     (with-temp-buffer
       (visual-regexp-rx--minibuffer-setup)
       (insert "TODO")
-      (should visual-regexp-rx--pristine) ; content check does the gating
+      (should-not visual-regexp-rx--pristine)
       (should (equal (visual-regexp-rx--get-regexp-string
                       (lambda (&optional _) (buffer-string)))
                      (rx-to-string '(seq "TODO")))))))
+
+(ert-deftest vrx-tests-pristine-cleared-on-first-edit ()
+  "Editing the minibuffer clears the pristine flag and its hook."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx--pristine nil))
+    (with-temp-buffer
+      (visual-regexp-rx--minibuffer-setup)
+      (insert "T")
+      (should-not visual-regexp-rx--pristine)
+      (should-not (memq #'visual-regexp-rx--clear-pristine
+                        before-change-functions)))))
+
+(ert-deftest vrx-tests-empty-form-second-time-native ()
+  "An empty form typed after editing compiles natively again."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx--pristine nil))
+    (with-temp-buffer
+      (visual-regexp-rx--minibuffer-setup)
+      (insert "TODO")
+      (erase-buffer)
+      (insert "(seq \"\")")
+      (should (equal (visual-regexp-rx--get-regexp-string
+                      (lambda (&optional _) (buffer-string)))
+                     (rx-to-string '(seq "")))))))
 
 (ert-deftest vrx-tests-empty-form-after-edit-native ()
   "Without the pristine flag, an empty form compiles natively."
