@@ -6,7 +6,7 @@
 ;; Keywords: matching, lisp, tools
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "28.1") (visual-regexp "1.1"))
-;; URL: https://github.com/kazure/visual-regexp-rx
+;; URL: https://github.com/zkazure/visual-regexp-rx.el
 
 ;; This file is not part of GNU Emacs.
 
