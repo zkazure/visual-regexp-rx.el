@@ -75,11 +75,65 @@
 (ert-deftest vrx-tests-prefill-regexp-minibuffer ()
   "The regexp minibuffer is prefilled with (seq \"\") in rx mode."
   (let ((vr/engine 'rx)
-        (vr--in-minibuffer 'vr--minibuffer-regexp))
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx--pristine nil))
     (with-temp-buffer
       (visual-regexp-rx--minibuffer-setup)
       (should (equal (buffer-string) "(seq \"\")"))
-      (should (= (point) 7)))))
+      (should (= (point) 7))
+      (should visual-regexp-rx--pristine))))
+
+(ert-deftest vrx-tests-prefill-pristine-unmatchable ()
+  "The unedited prefill compiles to a never-matching regexp."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx--pristine nil))
+    (with-temp-buffer
+      (visual-regexp-rx--minibuffer-setup)
+      (should (equal (visual-regexp-rx--get-regexp-string
+                      (lambda (&optional _) (buffer-string)))
+                     visual-regexp-rx--unmatchable)))))
+
+(ert-deftest vrx-tests-edited-prefill-native ()
+  "Editing the prefill compiles natively, pristine flag or not."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx--pristine nil))
+    (with-temp-buffer
+      (visual-regexp-rx--minibuffer-setup)
+      (insert "TODO")
+      (should visual-regexp-rx--pristine) ; content check does the gating
+      (should (equal (visual-regexp-rx--get-regexp-string
+                      (lambda (&optional _) (buffer-string)))
+                     (rx-to-string '(seq "TODO")))))))
+
+(ert-deftest vrx-tests-empty-form-after-edit-native ()
+  "Without the pristine flag, an empty form compiles natively."
+  (let ((vr/engine 'rx)
+        (visual-regexp-rx--pristine nil))
+    (should (equal (visual-regexp-rx--get-regexp-string
+                    (lambda (&optional _) "(seq \"\")"))
+                   (rx-to-string '(seq ""))))))
+
+(ert-deftest vrx-tests-no-pristine-other-stages ()
+  "Non-rx minibuffer setups clear a leftover pristine flag."
+  (let ((vr/engine 'emacs)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx--pristine t))
+    (with-temp-buffer
+      (visual-regexp-rx--minibuffer-setup)
+      (should-not visual-regexp-rx--pristine)))
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-replace)
+        (visual-regexp-rx--pristine t))
+    (with-temp-buffer
+      (visual-regexp-rx--minibuffer-setup)
+      (should-not visual-regexp-rx--pristine))))
+
+(ert-deftest vrx-tests-unmatchable-never-matches ()
+  "`visual-regexp-rx--unmatchable' matches no string."
+  (should-not (string-match-p visual-regexp-rx--unmatchable ""))
+  (should-not (string-match-p visual-regexp-rx--unmatchable "anything")))
 
 (ert-deftest vrx-tests-no-prefill-emacs-engine ()
   "No prefill with the emacs engine."
