@@ -49,13 +49,15 @@ jobs:
         run: |
           emacs -Q --batch -L . \
             --eval "(progn (require 'package) (package-initialize))" \
-            --eval "(progn (find-file \"visual-regexp-rx.el\")
-                           (let ((warnings (checkdoc-current-buffer t)))
-                             (if warnings
+            --eval "(progn (checkdoc-file \"visual-regexp-rx.el\")
+                           (let ((buf (get-buffer \"*Warnings*\")))
+                             (if (and buf
+                                      (string-match-p \"Warning (emacs)\"
+                                                      (with-current-buffer buf (buffer-string))))
                                  (progn
-                                   (princ (format \"checkdoc issues:\n%s\n\" warnings))
+                                   (princ (with-current-buffer buf (buffer-string)))
                                    (kill-emacs 1))
-                               (princ \"checkdoc: clean\n\"))))"
+                               (princ \"checkdoc: clean\\n\"))))"
 
       - name: ERT
         run: |
