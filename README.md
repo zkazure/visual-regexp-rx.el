@@ -1,0 +1,100 @@
+# visual-regexp-rx
+
+visual-regexp-rx is an extension to [visual-regexp](https://github.com/benma/visual-regexp.el)
+which enables the use of `rx` notation (structured, Lisp-style regular expressions)
+instead of Emacs-style regexp strings — the way
+[visual-regexp-steroids](https://github.com/benma/visual-regexp-steroids.el) enables
+PCRE (Python regular expressions).
+
+## Installation
+
+visual-regexp-rx depends on [visual-regexp](https://github.com/benma/visual-regexp.el) ≥ 1.1:
+
+```Lisp
+;; if the files are not already in the load path
+(add-to-list 'load-path "folder-to/visual-regexp/")
+(add-to-list 'load-path "folder-to/visual-regexp-rx/")
+(require 'visual-regexp)
+(require 'visual-regexp-rx)
+```
+
+or with use-package:
+
+```Lisp
+(use-package visual-regexp
+  :load-path "folder-to/visual-regexp/")
+
+(use-package visual-regexp-rx
+  :load-path "folder-to/visual-regexp-rx/")
+```
+
+Requires Emacs ≥ 28.1.
+
+## Usage
+
+Select the rx engine once, then use visual-regexp's own commands:
+
+```Lisp
+(setq vr/engine 'rx)
+```
+
+- `M-x vr/query-replace`: confirm each match with y/n (query replace)
+- `M-x vr/replace`: replace all matches at once
+
+In the minibuffer, type an rx form instead of a regexp string, e.g.:
+
+```text
+(seq "TODO" (+ blank) (group (+ nonl)))
+```
+
+The regexp minibuffer is prefilled with `(seq "")` and point is left between
+the quotes, ready for typing.  Empty `()` placeholders are treated as `(seq)`
+while the form is under construction, so highlighting does not disappear.
+Everything else — the live preview, the query loop and all minibuffer
+shortcuts — is plain visual-regexp.
+
+Set `vr/engine` back to `emacs` for plain visual-regexp behavior.
+
+To customize, use `M-x customize-group [RET] visual-regexp`.  The `rx` choice
+is added to `vr/engine`; when visual-regexp-steroids is installed, its
+existing option is extended instead.
+
+## Minibuffer shortcuts
+
+These are visual-regexp's own shortcuts, unchanged by this package:
+
+| key         | command                       | description                                                 |
+|-------------|-------------------------------|-------------------------------------------------------------|
+| `RET`       | `exit-minibuffer`             | confirm the replacement                                     |
+| `C-g`       | `keyboard-quit`               | abort                                                       |
+| `C-c p`     | `vr--shortcut-toggle-preview` | toggle preview style: arrow (match → result) / plain result |
+| `C-c a`     | `vr--shortcut-toggle-limit`   | toggle feedback limit (default 50 / all matches)            |
+| `C-c ?`     | `vr--minibuffer-help`         | help                                                        |
+| `M-p`/`M-n` | history                       | browse replacement history                                  |
+
+## How it works
+
+One around advice and one prefill hook (about 100 lines), no new commands:
+
+- `vr--get-regexp-string` is advised `:around`: when `vr/engine` is `rx`,
+  the minibuffer input is `read` as a Lisp structure and compiled with
+  `rx-to-string`; empty `()` placeholders are recursively replaced with
+  `(seq)` first.
+- Calls with `for-display` non-nil keep the raw input (it is only shown,
+  not used).
+- A `minibuffer-setup-hook` prefills `(seq "")` on the regexp minibuffer
+  in rx mode.
+- Conversion errors are re-signalled as `invalid-regexp` and shown by
+  visual-regexp's own error display.
+
+## Limitations
+
+- Relies on visual-regexp's private API `vr--get-regexp-string` (verified
+  with version 1.1; check the visual-regexp source for future versions).
+- `vr/engine` is shared with visual-regexp-steroids; if steroids is loaded
+  after this package it redefines the variable and overwrites the choice
+  list (`rx` remains usable via `setq`).
+- Rx forms are typed on one line; build complex multi-line forms in a
+  scratch buffer and paste them in.
+- Forms are `read` and compiled with `rx-to-string`; don't write
+  side-effecting code in them.
