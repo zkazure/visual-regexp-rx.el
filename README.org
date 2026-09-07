@@ -88,3 +88,7 @@ One around advice and one prefill hook (about 100 lines), no new commands:
   scratch buffer and paste them in.
 - Forms are =read= and compiled with =rx-to-string=; don't write
   side-effecting code in them.
+
+* License
+
+GPL-3.0-or-later.  See the =LICENSE= file for the full text.
