@@ -51,9 +51,15 @@ In the minibuffer, type an rx form instead of a regexp string, e.g.:
 Matches =TODO= followed by one or more spaces or tabs and captures the rest
 of the line in group 1, e.g. it matches =TODO fix the login bug=.
 
-The regexp minibuffer is prefilled with =(seq "")= and point is left between
-the quotes, ready for typing.  Empty =()= placeholders are treated as =(seq)=
-while the form is under construction, so highlighting does not disappear.
+Beyond plain visual-regexp, this package adds:
+
+- The regexp minibuffer is prefilled with =(seq "")=, point left between
+  the quotes, ready for typing.
+- Empty =()= placeholders are treated as =(seq)= while the form is under
+  construction, so highlighting does not disappear.
+- The pristine prefill compiles to a never-matching regexp, so the first
+  render does not flood the buffer with zero-width matches.
+
 Everything else — the live preview, the query loop and all minibuffer
 shortcuts — is plain visual-regexp.
 
