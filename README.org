@@ -1,8 +1,6 @@
 #+TITLE: visual-regexp-rx
 #+AUTHOR: Kazure Zheng
 
-* visual-regexp-rx
-
 visual-regexp-rx is an extension to [[https://github.com/benma/visual-regexp.el][visual-regexp]]
 which enables the use of =rx= notation (structured, Lisp-style regular expressions)
 instead of Emacs-style regexp strings — the way
@@ -49,6 +47,9 @@ In the minibuffer, type an rx form instead of a regexp string, e.g.:
 #+begin_src text
 (seq "TODO" (+ blank) (group (+ nonl)))
 #+end_src
+
+Matches =TODO= followed by one or more spaces or tabs and captures the rest
+of the line in group 1, e.g. it matches =TODO fix the login bug=.
 
 The regexp minibuffer is prefilled with =(seq "")= and point is left between
 the quotes, ready for typing.  Empty =()= placeholders are treated as =(seq)=
