@@ -156,6 +156,57 @@
       (visual-regexp-rx--minibuffer-setup)
       (should-not visual-regexp-rx--pristine))))
 
+(ert-deftest vrx-tests-customs-defaults ()
+  "The prefill option exists with its documented default."
+  (should (equal visual-regexp-rx-prefill-form "(seq \"\")"))
+  (should (member '(visual-regexp-rx-prefill-form custom-variable)
+                  (get 'visual-regexp 'custom-group))))
+
+(ert-deftest vrx-tests-empty-prefill-form-disables-prefill ()
+  "An empty `visual-regexp-rx-prefill-form' means no prefill."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx--pristine nil)
+        (visual-regexp-rx-prefill-form ""))
+    (with-temp-buffer
+      (visual-regexp-rx--minibuffer-setup)
+      (should (equal (buffer-string) ""))
+      (should-not visual-regexp-rx--pristine)
+      (should-not (memq #'visual-regexp-rx--clear-pristine
+                        before-change-functions)))))
+
+(ert-deftest vrx-tests-prefill-form-custom ()
+  "A custom prefill form is inserted with point inside its quotes."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx--pristine nil)
+        (visual-regexp-rx-prefill-form "(group \"\")"))
+    (with-temp-buffer
+      (visual-regexp-rx--minibuffer-setup)
+      (should (equal (buffer-string) "(group \"\")"))
+      (should (= (point) 9))
+      (should visual-regexp-rx--pristine))))
+
+(ert-deftest vrx-tests-prefill-form-no-empty-string-point-at-end ()
+  "Without an empty string literal, point stays at the end."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx--pristine nil)
+        (visual-regexp-rx-prefill-form "(seq)"))
+    (with-temp-buffer
+      (visual-regexp-rx--minibuffer-setup)
+      (should (equal (buffer-string) "(seq)"))
+      (should (= (point) (point-max))))))
+
+(ert-deftest vrx-tests-pristine-check-compares-prefill-form ()
+  "A pristine flag only suppresses the exact prefill form."
+  (let ((vr/engine 'rx)
+        (visual-regexp-rx--pristine t)
+        (visual-regexp-rx-prefill-form "(seq \"a\")"))
+    (should (equal (visual-regexp-rx--get-regexp-string
+                    (lambda (&optional _) "(seq \"b\")"))
+                   (rx-to-string '(seq "b"))))))
+
 (ert-deftest vrx-tests-unmatchable-never-matches ()
   "`visual-regexp-rx--unmatchable' matches no string."
   (should-not (string-match-p visual-regexp-rx--unmatchable ""))

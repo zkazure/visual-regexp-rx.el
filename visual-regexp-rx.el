@@ -73,6 +73,23 @@ visual-regexp's own commands, e.g. (setq vr/engine 'rx)."
     :type '(choice (const emacs) (const rx))
     :group 'visual-regexp))
 
+;;; User options
+
+(defcustom visual-regexp-rx-prefill-form "(seq \"\")"
+  "Rx form prefilled in the regexp minibuffer in rx mode.
+The form is inserted verbatim, so keep it on one line.  An empty
+string disables the prefill and leaves the minibuffer empty, as
+in plain visual-regexp.
+
+When the form contains an empty string literal (\"\"), point is
+left between its quotes, ready for typing; otherwise point ends
+up after the form.
+
+While the prefill is left unedited the text is not compiled at
+all, so an invalid form is only reported once you edit it."
+  :type 'string
+  :group 'visual-regexp)
+
 ;;; Compile rx input
 
 (defconst visual-regexp-rx--unmatchable "\\`a\\`"
@@ -94,15 +111,17 @@ ORIG is the original `vr--get-regexp-string'.  FOR-DISPLAY, when
 non-nil, means the string is only shown, not used, so the raw
 input is kept.
 
-The pristine prefill `(seq \"\")' compiles to a regexp that
-matches the empty string at every buffer position; while
+When `visual-regexp-rx-prefill-form' is the default, the
+pristine prefill compiles to a regexp that matches the empty
+string at every buffer position.  While
 `visual-regexp-rx--pristine' is non-nil and the minibuffer still
-holds that prefill unedited, return a never-matching regexp
-instead of flooding the buffer with zero-width highlights."
+holds `visual-regexp-rx-prefill-form' unedited, return a
+never-matching regexp instead of flooding the buffer with
+zero-width highlights."
   (let ((regexp (funcall orig for-display)))
     (if (and (not for-display) (eq vr/engine 'rx))
         (if (and visual-regexp-rx--pristine
-                 (string= regexp "(seq \"\")"))
+                 (string= regexp visual-regexp-rx-prefill-form))
             visual-regexp-rx--unmatchable
           (condition-case err
               (rx-to-string (visual-regexp-rx--fill-empty (read regexp)))
@@ -122,13 +141,19 @@ removes itself afterwards."
   (remove-hook 'before-change-functions #'visual-regexp-rx--clear-pristine t))
 
 (defun visual-regexp-rx--minibuffer-setup ()
-  "Prefill `(seq \"\")' on the regexp minibuffer in rx mode.
-Point is left between the quotes, ready for typing.  Until the
-minibuffer is edited, the empty form compiles to a never-matching
-regexp, so the first rendering highlights nothing."
+  "Prefill the regexp minibuffer in rx mode.
+The text inserted is `visual-regexp-rx-prefill-form'; an empty
+value means no prefill.  Point is left inside the first empty
+string literal of the form, ready for typing, and at the end of
+the form when it has none.
+
+Until the minibuffer is edited the form compiles to a
+never-matching regexp, so the first rendering highlights
+nothing."
   (if (and (eq vr/engine 'rx)
-           (eq vr--in-minibuffer 'vr--minibuffer-regexp))
-      (progn
+           (eq vr--in-minibuffer 'vr--minibuffer-regexp)
+           (not (string= "" visual-regexp-rx-prefill-form)))
+      (let ((start (point)))
         ;; Drop a leftover one-shot hook from an aborted session
         ;; before the prefill insert, so it cannot clear the flag on
         ;; the insert itself.
@@ -137,8 +162,13 @@ regexp, so the first rendering highlights nothing."
         ;; function already runs during the insert and renders the
         ;; first feedback with this flag.
         (setq visual-regexp-rx--pristine t)
-        (insert "(seq \"\")")
-        (goto-char (- (point-max) 2)) ; point between the quotes
+        (insert visual-regexp-rx-prefill-form)
+        ;; Point between the quotes of the first empty string
+        ;; literal; the natural spot to start typing.
+        (goto-char start)
+        (if (search-forward "\"\"" nil t)
+            (backward-char)
+          (goto-char (point-max)))
         ;; Clear on the first edit, not on the prefill insert itself.
         (add-hook 'before-change-functions #'visual-regexp-rx--clear-pristine
                   nil t))

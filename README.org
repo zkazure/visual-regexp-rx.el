@@ -59,6 +59,22 @@ Beyond plain visual-regexp, this package adds:
   construction, so highlighting does not disappear.
 - The pristine prefill compiles to a never-matching regexp, so the first
   render does not flood the buffer with zero-width matches.
+- The prefill is configurable with =visual-regexp-rx-prefill-form=
+  (string, default ="(seq "")"=): the form prefilled in the regexp
+  minibuffer.  Set it to =""= to disable the prefill and start with an
+  empty minibuffer, or to any other one-line rx form to prefill
+  something else.  Point ends up inside the first =""= of the form, or
+  after it when there is none.
+
+For example:
+
+#+begin_src elisp
+;; no prefill: start with an empty minibuffer, like plain visual-regexp
+(setq visual-regexp-rx-prefill-form "")
+
+;; prefill something you want to extend while typing
+(setq visual-regexp-rx-prefill-form "(seq \"TODO\" \"\")")
+#+end_src
 
 Everything else — the live preview, the query loop and all minibuffer
 shortcuts — is plain visual-regexp.
@@ -79,8 +95,11 @@ One around advice and one prefill hook (about 100 lines), no new commands:
   =(seq)= first.
 - Calls with =for-display= non-nil keep the raw input (it is only shown,
   not used).
-- A =minibuffer-setup-hook= prefills =(seq "")= on the regexp minibuffer
-  in rx mode.
+- A =minibuffer-setup-hook= prefills =visual-regexp-rx-prefill-form=
+  on the regexp minibuffer in rx mode (nothing is inserted when it is
+  empty).  The pristine flag is cleared on the first edit, and while it
+  is set the form is compared against =visual-regexp-rx-prefill-form=
+  and replaced by a never-matching regexp.
 - Conversion errors are re-signalled as =invalid-regexp= and shown by
   visual-regexp's own error display.
 
