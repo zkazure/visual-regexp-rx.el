@@ -157,9 +157,12 @@
       (should-not visual-regexp-rx--pristine))))
 
 (ert-deftest vrx-tests-customs-defaults ()
-  "The prefill option exists with its documented default."
+  "The customization options exist with their documented defaults."
   (should (equal visual-regexp-rx-prefill-form "(seq \"\")"))
+  (should (eq visual-regexp-rx-suppress-empty-highlight t))
   (should (member '(visual-regexp-rx-prefill-form custom-variable)
+                  (get 'visual-regexp 'custom-group)))
+  (should (member '(visual-regexp-rx-suppress-empty-highlight custom-variable)
                   (get 'visual-regexp 'custom-group))))
 
 (ert-deftest vrx-tests-empty-prefill-form-disables-prefill ()
@@ -197,6 +200,18 @@
       (visual-regexp-rx--minibuffer-setup)
       (should (equal (buffer-string) "(seq)"))
       (should (= (point) (point-max))))))
+
+(ert-deftest vrx-tests-suppress-disabled-compiles-natively ()
+  "With suppression off, the pristine prefill compiles natively."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx--pristine nil)
+        (visual-regexp-rx-suppress-empty-highlight nil))
+    (with-temp-buffer
+      (visual-regexp-rx--minibuffer-setup)
+      (should (equal (visual-regexp-rx--get-regexp-string
+                      (lambda (&optional _) (buffer-string)))
+                     (rx-to-string '(seq "")))))))
 
 (ert-deftest vrx-tests-pristine-check-compares-prefill-form ()
   "A pristine flag only suppresses the exact prefill form."

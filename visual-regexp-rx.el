@@ -85,9 +85,25 @@ When the form contains an empty string literal (\"\"), point is
 left between its quotes, ready for typing; otherwise point ends
 up after the form.
 
-While the prefill is left unedited the text is not compiled at
-all, so an invalid form is only reported once you edit it."
+While the prefill is left unedited and
+`visual-regexp-rx-suppress-empty-highlight' is non-nil, the text
+is not compiled at all, so an invalid form is only reported once
+you edit it."
   :type 'string
+  :group 'visual-regexp)
+
+(defcustom visual-regexp-rx-suppress-empty-highlight t
+  "Whether the unedited prefill is kept from highlighting anything.
+With the default `visual-regexp-rx-prefill-form' the pristine
+prefill compiles to a regexp matching the empty string at every
+buffer position, which visual-regexp renders as an empty-match
+marker at each one.  While this is non-nil, that first render
+uses a never-matching regexp instead; set it to nil to get
+visual-regexp's own behavior.
+
+Only the untouched prefill is affected: the flag is cleared on
+the first edit and the input then compiles normally."
+  :type 'boolean
   :group 'visual-regexp)
 
 ;;; Compile rx input
@@ -114,13 +130,15 @@ input is kept.
 When `visual-regexp-rx-prefill-form' is the default, the
 pristine prefill compiles to a regexp that matches the empty
 string at every buffer position.  While
-`visual-regexp-rx--pristine' is non-nil and the minibuffer still
-holds `visual-regexp-rx-prefill-form' unedited, return a
+`visual-regexp-rx--pristine' is non-nil, the minibuffer still
+holds `visual-regexp-rx-prefill-form' unedited and
+`visual-regexp-rx-suppress-empty-highlight' is non-nil, return a
 never-matching regexp instead of flooding the buffer with
 zero-width highlights."
   (let ((regexp (funcall orig for-display)))
     (if (and (not for-display) (eq vr/engine 'rx))
         (if (and visual-regexp-rx--pristine
+                 visual-regexp-rx-suppress-empty-highlight
                  (string= regexp visual-regexp-rx-prefill-form))
             visual-regexp-rx--unmatchable
           (condition-case err
@@ -147,9 +165,10 @@ value means no prefill.  Point is left inside the first empty
 string literal of the form, ready for typing, and at the end of
 the form when it has none.
 
-Until the minibuffer is edited the form compiles to a
-never-matching regexp, so the first rendering highlights
-nothing."
+Until the minibuffer is edited and while
+`visual-regexp-rx-suppress-empty-highlight' is non-nil, the form
+compiles to a never-matching regexp, so the first rendering
+highlights nothing."
   (if (and (eq vr/engine 'rx)
            (eq vr--in-minibuffer 'vr--minibuffer-regexp)
            (not (string= "" visual-regexp-rx-prefill-form)))

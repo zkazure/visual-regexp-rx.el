@@ -59,18 +59,25 @@ Beyond plain visual-regexp, this package adds:
   construction, so highlighting does not disappear.
 - The pristine prefill compiles to a never-matching regexp, so the first
   render does not flood the buffer with zero-width matches.
-- The prefill is configurable with =visual-regexp-rx-prefill-form=
-  (string, default ="(seq "")"=): the form prefilled in the regexp
-  minibuffer.  Set it to =""= to disable the prefill and start with an
-  empty minibuffer, or to any other one-line rx form to prefill
-  something else.  Point ends up inside the first =""= of the form, or
-  after it when there is none.
+- The prefill and the empty-match suppression are configurable:
+  - =visual-regexp-rx-prefill-form= (string, default ="(seq "")"=): the
+    form prefilled in the regexp minibuffer.  Set it to =""= to disable
+    the prefill and start with an empty minibuffer, or to any other
+    one-line rx form to prefill something else.  Point ends up inside
+    the first =""= of the form, or after it when there is none.
+  - =visual-regexp-rx-suppress-empty-highlight= (boolean, default =t=):
+    whether the untouched prefill is kept from highlighting anything.
+    Set it to =nil= to let the prefill render as visual-regexp would,
+    i.e. an empty-match marker at every buffer position.
 
 For example:
 
 #+begin_src elisp
 ;; no prefill: start with an empty minibuffer, like plain visual-regexp
 (setq visual-regexp-rx-prefill-form "")
+
+;; do not suppress the empty-match markers of the untouched prefill
+(setq visual-regexp-rx-suppress-empty-highlight nil)
 
 ;; prefill something you want to extend while typing
 (setq visual-regexp-rx-prefill-form "(seq \"TODO\" \"\")")
@@ -99,7 +106,8 @@ One around advice and one prefill hook (about 100 lines), no new commands:
   on the regexp minibuffer in rx mode (nothing is inserted when it is
   empty).  The pristine flag is cleared on the first edit, and while it
   is set the form is compared against =visual-regexp-rx-prefill-form=
-  and replaced by a never-matching regexp.
+  and, if =visual-regexp-rx-suppress-empty-highlight= is non-nil,
+  replaced by a never-matching regexp.
 - Conversion errors are re-signalled as =invalid-regexp= and shown by
   visual-regexp's own error display.
 
