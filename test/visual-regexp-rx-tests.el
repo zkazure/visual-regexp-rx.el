@@ -936,7 +936,48 @@ property has to make it into the buffer and back out again."
       (visual-regexp-rx-edit-history-next)
       (should (equal (buffer-string) "precious")))))
 
+(ert-deftest vrx-tests-edit-query-replace-end-to-end ()
+  "A whole `vr/query-replace' runs with its regexp from the buffer.
+The form is typed over several lines, the way the editing buffer
+invites, and the query loop is driven to completion, so this covers
+the interactive command end to end: the advice on
+`vr--interactive-get-args', the editing buffer, a multi-line form, the
+replacement prompt in the minibuffer, and the real replacement."
+  (let ((vr/engine 'rx)
+        (visual-regexp-rx-use-editing-buffer t)
+        (vr--in-minibuffer nil)
+        (vr--calling-func nil)
+        (target (generate-new-buffer "*vrx-qr-target*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer target
+            (insert "TODO fix the login bug\nTODO write the docs\n")
+            (goto-char (point-min)))
+          ;; The query loop makes the first match visible, which needs
+          ;; the target buffer to be displayed.
+          (switch-to-buffer target)
+          (cl-letf (((symbol-function 'recursive-edit)
+                     (lambda ()
+                       (erase-buffer)
+                       (insert "(seq \"TODO\"\n")
+                       (insert "     (+ blank)\n")
+                       (insert "     (group (+ nonl)))")))
+                    ;; The replacement prompt must still be the
+                    ;; minibuffer's.
+                    ((symbol-function 'read-from-minibuffer)
+                     (lambda (&rest _) "DONE: \\1"))
+                    ;; `?!' answers "replace all remaining matches".
+                    ((symbol-function 'read-event) (lambda () ?!)))
+            (call-interactively #'vr/query-replace))
+          (should (equal (with-current-buffer target (buffer-string))
+                         "DONE: fix the login bug\nDONE: write the docs\n")))
+      (when (buffer-live-p target)
+        (with-current-buffer target (set-buffer-modified-p nil))
+        (kill-buffer target))
+      (visual-regexp-rx--edit-buffer-teardown))))
+
 (provide 'visual-regexp-rx-tests)
+
 
 
 
