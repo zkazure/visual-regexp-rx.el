@@ -741,7 +741,11 @@ target buffer."
   (let ((buffer visual-regexp-rx--editing-buffer)
         (window visual-regexp-rx--edit-window))
     (setq visual-regexp-rx--editing-buffer nil
-          visual-regexp-rx--edit-window nil)
+          visual-regexp-rx--edit-window nil
+          ;; The session ends with the buffer it was read from; keeping
+          ;; the two in step is what lets `--read-input' tell a read
+          ;; that is already being served from one that is not.
+          visual-regexp-rx--edit-active nil)
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
         (remove-hook 'after-change-functions
@@ -785,7 +789,6 @@ in the middle of the session."
            (visual-regexp-rx--edit-aborted (signal 'quit nil))
            (t (with-current-buffer buffer
                 (buffer-string)))))
-      (setq visual-regexp-rx--edit-active nil)
       (visual-regexp-rx--edit-buffer-teardown)
       (when (window-live-p previous-window)
         (select-window previous-window))
@@ -795,8 +798,20 @@ in the middle of the session."
   "Read one input for visual-regexp.
 REAL-READ is the original `read-from-minibuffer' and ARGS are the
 arguments it was called with.  Only the regexp prompt uses the
-editing buffer; the replacement prompt keeps using the minibuffer."
-  (if (visual-regexp-rx--editing-buffer-enabled-p)
+editing buffer; the replacement prompt keeps using the minibuffer.
+
+`read-from-minibuffer' stays shadowed for as long as
+`vr--interactive-get-args' runs, so a minibuffer read started from
+inside the editing session -- by `execute-extended-command', by
+`eval-expression', by a `completing-read' -- lands here as well.
+Such a read must go to the minibuffer: taking it over would start a
+second editing session, whose setup erases the form being edited."
+  (if (and (visual-regexp-rx--editing-buffer-enabled-p)
+           ;; `visual-regexp-rx--edit-active' is non-nil exactly while
+           ;; `visual-regexp-rx--read-in-buffer' runs; the stage that
+           ;; `--editing-buffer-enabled-p' looks at is still the
+           ;; regexp one then, so it cannot rule this out on its own.
+           (not visual-regexp-rx--edit-active))
       (visual-regexp-rx--read-in-buffer)
     (apply real-read args)))
 

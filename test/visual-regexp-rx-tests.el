@@ -544,6 +544,12 @@ It must not leak to the replacement prompt or to other callers."
       (let ((vr--in-minibuffer 'vr--minibuffer-replace))
         (should (equal (visual-regexp-rx--around-interactive-get-args
                         (lambda (&rest _) (read-from-minibuffer "p: ")))
+                       "MINIBUFFER")))
+      ;; Nor while the editing buffer is the one being read: a
+      ;; minibuffer read started from inside it is the minibuffer's.
+      (let ((visual-regexp-rx--edit-active t))
+        (should (equal (visual-regexp-rx--around-interactive-get-args
+                        (lambda (&rest _) (read-from-minibuffer "p: ")))
                        "MINIBUFFER")))))
   ;; With the option off, the real reader is left alone.
   (let ((visual-regexp-rx-use-editing-buffer nil)
@@ -778,6 +784,54 @@ window must not be left behind either."
       (when (window-live-p window) (delete-window window))
       (visual-regexp-rx--edit-buffer-teardown))))
 
+(ert-deftest vrx-tests-edit-other-minibuffer-read-is-not-taken-over ()
+  "A minibuffer read started inside the session is left to the minibuffer.
+`M-x', `M-:' and every `completing-read' read through
+`read-from-minibuffer', which is shadowed for as long as
+`vr--interactive-get-args' runs.  Taking such a read over starts a
+second editing session: its setup erases the form being edited, and
+the minibuffer that was asked for never appears."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer nil)
+        (vr--calling-func nil)
+        (vr--last-minibuffer-contents "")
+        (visual-regexp-rx-use-editing-buffer t)
+        (visual-regexp-rx-completion nil)
+        (target (generate-new-buffer "*vrx-other-minibuffer*"))
+        (sessions 0)
+        (minibuffer-read-result nil)
+        (form-after-read nil))
+    (unwind-protect
+        (progn
+          (with-current-buffer target
+            (insert "TODO x\n")
+            (goto-char (point-min)))
+          (cl-letf (((symbol-function 'read-from-minibuffer)
+                     (lambda (&rest _) "ignore"))
+                    ((symbol-function 'vr--show-feedback)
+                     (lambda (&rest _) nil))
+                    ((symbol-function 'recursive-edit)
+                     (lambda ()
+                       (setq sessions (1+ sessions))
+                       (when (> sessions 1)
+                         (error "a second editing session was started"))
+                       ;; The form has been typed already.
+                       (erase-buffer)
+                       (insert "(seq \"typed\")")
+                       ;; ... and now the user presses M-x.
+                       (setq minibuffer-read-result
+                             (read-from-minibuffer "M-x "))
+                       (setq form-after-read (buffer-string)))))
+            (vr--interactive-get-args 'vr--mode-regexp-replace
+                                      'vr--calling-func-query-replace))
+          (should (= sessions 1))
+          (should (equal minibuffer-read-result "ignore"))
+          (should (equal form-after-read "(seq \"typed\")")))
+      (when (buffer-live-p target)
+        (with-current-buffer target (set-buffer-modified-p nil))
+        (kill-buffer target))
+      (visual-regexp-rx--edit-buffer-teardown))))
+
 (ert-deftest vrx-tests-edit-buffer-uses-side-window ()
   "The editing buffer is shown in a bottom side window.
 That is what keeps the target buffer, and with it the live preview,
@@ -794,7 +848,11 @@ visible while the form is edited."
           (should (eq (window-buffer window) buffer)))
       (visual-regexp-rx--edit-buffer-teardown))
     (should-not (window-live-p window))
-    (should-not (get-buffer visual-regexp-rx--edit-buffer-name))))
+    (should-not (get-buffer visual-regexp-rx--edit-buffer-name))
+    ;; Tearing the buffer down ends the session, buffer and flag
+    ;; together; `--read-input' relies on that when it decides whether
+    ;; a minibuffer read is its own.
+    (should-not visual-regexp-rx--edit-active)))
 
 (ert-deftest vrx-tests-edit-keymap-bindings ()
   "The editing buffer offers the minibuffer keys, but not `RET'."
