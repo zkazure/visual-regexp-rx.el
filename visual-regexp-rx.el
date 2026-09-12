@@ -609,6 +609,8 @@ call `minibuffer-contents' outside of a minibuffer."
     (define-key map (kbd "C-c ?") #'vr--minibuffer-help)
     (define-key map (kbd "C-c C-a") #'vr--shortcut-toggle-limit)
     (define-key map (kbd "C-c C-p") #'visual-regexp-rx--edit-toggle-preview)
+    (define-key map (kbd "M-n") #'visual-regexp-rx-edit-history-next)
+    (define-key map (kbd "M-p") #'visual-regexp-rx-edit-history-prev)
     map)
   "Keymap of `visual-regexp-rx-edit-mode'.")
 
@@ -624,7 +626,8 @@ the form can span several lines.
 \\[vr--minibuffer-help] shows help.
 \\[vr--shortcut-toggle-limit] and
 \\[visual-regexp-rx--edit-toggle-preview] are the minibuffer
-shortcuts."
+shortcuts, and \\[visual-regexp-rx-edit-history-prev] and
+\\[visual-regexp-rx-edit-history-next] cycle earlier inputs."
   :lighter " VR-rx"
   :keymap visual-regexp-rx-edit-mode-map
   :group 'visual-regexp)
@@ -713,6 +716,11 @@ Signal `quit' when the user aborted it with
 `visual-regexp-rx-edit-abort'."
   (let ((previous-buffer (current-buffer))
         (previous-window (selected-window))
+        ;; The separator of a search/replace pair must not stick to the
+        ;; text typed after it; visual-regexp binds this around its own
+        ;; minibuffer read.
+        (text-property-default-nonsticky
+         (cons '(separator . t) text-property-default-nonsticky))
         buffer)
     (unwind-protect
         (progn
@@ -759,6 +767,71 @@ extent of the call only, so no other caller of it is affected."
 
 (advice-add 'vr--interactive-get-args :around
             #'visual-regexp-rx--around-interactive-get-args)
+
+;;; Input history
+
+(defun visual-regexp-rx--edit-history-elements ()
+  "Return the inputs the history commands cycle through.
+This mirrors the history visual-regexp offers in its minibuffer: the
+search/replace pairs of `vr/query-replace-defaults-variable' first,
+combined with `vr/match-separator-string' so that visual-regexp can
+split them again, and then the regexps of
+`vr/query-replace-from-history-variable'."
+  (let ((separator (when vr/match-separator-string
+                     (propertize "\0"
+                                 'display vr/match-separator-string
+                                 'separator t))))
+    (append
+     (when separator
+       (mapcar (lambda (from-to)
+                 (concat (query-replace-descr (car from-to))
+                         separator
+                         (query-replace-descr (cdr from-to))))
+               (symbol-value vr/query-replace-defaults-variable)))
+     (symbol-value vr/query-replace-from-history-variable))))
+
+(defun visual-regexp-rx--edit-history-insert (element)
+  "Replace the contents of the editing buffer with ELEMENT.
+A search/replace pair keeps the separator property of ELEMENT, so
+that visual-regexp splits it into a search and a replacement again."
+  ;; Replacing the whole text is one change as far as the preview is
+  ;; concerned, so that cycling the history does not render the empty
+  ;; intermediate state.
+  (combine-after-change-calls
+    (erase-buffer)
+    (insert element))
+  (goto-char (point-max)))
+
+(defun visual-regexp-rx--edit-history-cycle (step)
+  "Replace the edited form with an earlier or later input.
+STEP is how many entries to move, positive for earlier ones.
+Earlier means further back in the history the minibuffer would
+offer, which visual-regexp builds for that prompt only."
+  (when (buffer-live-p visual-regexp-rx--editing-buffer)
+    (with-current-buffer visual-regexp-rx--editing-buffer
+      (let ((elements (visual-regexp-rx--edit-history-elements))
+            (position visual-regexp-rx--edit-history-index))
+        ;; Going further back starts the browsing; going forward only
+        ;; makes sense once it has started.  A nil position means the
+        ;; form was not taken from the history yet, which is one step
+        ;; before its most recent entry.
+        (when (and elements (or position (< 0 step)))
+          (setq position (max 0 (min (1- (length elements))
+                                     (+ (if position position -1) step))))
+          (setq visual-regexp-rx--edit-history-index position)
+          (visual-regexp-rx--edit-history-insert (nth position elements)))))))
+
+(defun visual-regexp-rx-edit-history-prev ()
+  "Replace the edited form with an earlier input.
+This is what `M-p' does in visual-regexp's minibuffer."
+  (interactive)
+  (visual-regexp-rx--edit-history-cycle 1))
+
+(defun visual-regexp-rx-edit-history-next ()
+  "Replace the edited form with a later input.
+This is what `M-n' does in visual-regexp's minibuffer."
+  (interactive)
+  (visual-regexp-rx--edit-history-cycle -1))
 
 ;;; Prefill the rx form
 

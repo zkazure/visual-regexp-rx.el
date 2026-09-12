@@ -28,6 +28,11 @@
 (require 'ert)
 (require 'visual-regexp-rx)
 
+;; Declared special so that the tests can `let'-bind the variables that
+;; visual-regexp looks up with `symbol-value'.
+(defvar vrx-tests--from-history nil)
+(defvar vrx-tests--defaults nil)
+
 (ert-deftest vrx-tests-engine-defined ()
   "`vr/engine' exists and offers the rx choice."
   (should (boundp 'vr/engine))
@@ -550,11 +555,17 @@ It must not leak to the replacement prompt or to other callers."
                      "MINIBUFFER")))))
 
 (defmacro vrx-tests--with-editing-buffer (&rest body)
-  "Run BODY against the rx editing buffer and tear it down."
+  "Run BODY against the rx editing buffer and tear it down.
+The state visual-regexp would have prepared for its prompt is
+faked: `vr--last-minibuffer-contents' starts out empty, the way
+`vr--set-regexp-string' leaves it, and the live preview is stubbed
+out, since these tests have no target buffer to render into."
   (declare (indent 0) (debug t))
-  `(unwind-protect
-       (progn ,@body)
-     (visual-regexp-rx--edit-buffer-teardown)))
+  `(let ((vr--last-minibuffer-contents ""))
+     (cl-letf (((symbol-function 'vr--show-feedback) (lambda (&rest _) nil)))
+       (unwind-protect
+           (progn ,@body)
+         (visual-regexp-rx--edit-buffer-teardown)))))
 
 (ert-deftest vrx-tests-edit-buffer-mode-and-prefill ()
   "The editing buffer is set up in the configured mode and prefilled."
@@ -762,6 +773,10 @@ It must not leak to the replacement prompt or to other callers."
               #'vr--shortcut-toggle-limit))
   (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c C-p"))
               #'visual-regexp-rx--edit-toggle-preview))
+  (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "M-n"))
+              #'visual-regexp-rx-edit-history-next))
+  (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "M-p"))
+              #'visual-regexp-rx-edit-history-prev))
   ;; `C-c <letter>' is reserved for the user, so it must stay free.
   (should-not (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c a")))
   (should-not (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c p")))
@@ -849,7 +864,74 @@ rejects nil, so an editing session must leave an overlay behind."
       ;; concerned.
       (should-not (overlay-start overlay)))))
 
+(ert-deftest vrx-tests-edit-history-prev-and-next ()
+  "The history commands cycle the inputs the minibuffer would offer."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t)
+        (vr/query-replace-from-history-variable 'vrx-tests--from-history)
+        (vr/query-replace-defaults-variable 'vrx-tests--defaults)
+        (vrx-tests--from-history '("(seq \"a\")" "(seq \"b\")"))
+        (vrx-tests--defaults nil)
+        (renders 0))
+    (vrx-tests--with-editing-buffer
+      (cl-letf (((symbol-function 'vr--show-feedback)
+                 (lambda (&rest _) (setq renders (1+ renders)))))
+        (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
+          (should (= renders 1))        ; the prefill render
+          ;; The most recent input comes first.
+          (visual-regexp-rx-edit-history-prev)
+          (should (equal (with-current-buffer buffer (buffer-string))
+                         "(seq \"a\")"))
+          (should (= renders 2))        ; cycling updates the preview
+          (visual-regexp-rx-edit-history-prev)
+          (should (equal (with-current-buffer buffer (buffer-string))
+                         "(seq \"b\")"))
+          ;; Going forward returns to the more recent one and stops
+          ;; there instead of running off the end of the ring.
+          (visual-regexp-rx-edit-history-next)
+          (should (equal (with-current-buffer buffer (buffer-string))
+                         "(seq \"a\")"))
+          (visual-regexp-rx-edit-history-next)
+          (should (equal (with-current-buffer buffer (buffer-string))
+                         "(seq \"a\")"))
+          (should (= (buffer-local-value
+                      'visual-regexp-rx--edit-history-index buffer)
+                     0)))))))
+
+(ert-deftest vrx-tests-edit-history-pair-keeps-separator ()
+  "A search/replace pair survives the round trip through the buffer.
+visual-regexp finds the separator by its text property, so the
+property has to make it into the buffer and back out again."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t)
+        (vr/query-replace-from-history-variable 'vrx-tests--from-history)
+        (vr/query-replace-defaults-variable 'vrx-tests--defaults)
+        (vrx-tests--from-history nil)
+        (vrx-tests--defaults '(("TODO" . "DONE"))))
+    (vrx-tests--with-editing-buffer
+      (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
+        (cl-letf (((symbol-function 'vr--show-feedback) (lambda (&rest _) nil)))
+          (visual-regexp-rx-edit-history-prev))
+        (with-current-buffer buffer
+          (should (text-property-any (point-min) (point-max) 'separator t))
+          (should (equal (vr--query-replace--split-string (buffer-string))
+                         '("TODO" . "DONE"))))))))
+
+(ert-deftest vrx-tests-edit-history-outside-session-is-inert ()
+  "The history commands never touch a buffer that is not being edited."
+  (let ((visual-regexp-rx--editing-buffer nil)
+        (vr/query-replace-from-history-variable 'vrx-tests--from-history)
+        (vrx-tests--from-history '("(seq \"a\")")))
+    (with-temp-buffer
+      (insert "precious")
+      (visual-regexp-rx-edit-history-prev)
+      (visual-regexp-rx-edit-history-next)
+      (should (equal (buffer-string) "precious")))))
+
 (provide 'visual-regexp-rx-tests)
+
 
 
 

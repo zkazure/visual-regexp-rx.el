@@ -84,6 +84,8 @@ Beyond plain visual-regexp, this package adds:
 - The form can be edited in a buffer of its own instead of the
   minibuffer, with Lisp indentation and multi-line forms; see
   [[*Edit the form in a buffer][Edit the form in a buffer]].
+- =M-n= and =M-p= cycle earlier inputs, the way they do in the
+  minibuffer.
 
 For example:
 
@@ -138,6 +140,7 @@ C-c C-k   abort the whole command
 C-c ?     help
 C-c C-a   toggle showing all matches
 C-c C-p   toggle the replacement preview
+M-n, M-p  cycle earlier inputs
 #+end_src
 
 The buffer is in =visual-regexp-rx-edit-buffer-mode=, =lisp-data-mode= by
@@ -192,6 +195,13 @@ minor mode:
   of =minibuffer-contents=, and the prompt and the messages of the
   session go to the header line instead of the minibuffer and the echo
   area.
+- The history commands rebuild the list the minibuffer would offer —
+  the search/replace pairs of =vr/query-replace-defaults-variable=,
+  combined with =vr/match-separator-string=, followed by the regexps of
+  =vr/query-replace-from-history-variable= — because the minibuffer's own
+  =M-n= and =M-p= work on the minibuffer's text.  A pair keeps the
+  separator's text property across the round trip, so visual-regexp
+  still splits it into a search and a replacement.
 
 * Limitations
 
@@ -216,6 +226,9 @@ minor mode:
   cleanup deletes it without checking that it is one.
 - =C-c <letter>= is reserved for the user, so the editing buffer uses
   =C-c C-a= and =C-c C-p= where the minibuffer uses =C-c a= and =C-c p=.
+- Cycling the history past its newest entry cannot bring back the text
+  that was typed before the browsing started, so it stays on the newest
+  entry instead.  The minibuffer restores that text.
 - Forms are =read= and compiled with =rx-to-string=; don't write
   side-effecting code in them.
 
