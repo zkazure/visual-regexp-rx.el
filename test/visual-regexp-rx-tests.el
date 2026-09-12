@@ -621,6 +621,31 @@ out, since these tests have no target buffer to render into."
         (should (= (with-current-buffer buffer (point)) (point-min)))
         (should-not visual-regexp-rx--pristine)))))
 
+(ert-deftest vrx-tests-edit-mode-hook-runs ()
+  "Setting up the editing buffer runs `visual-regexp-rx-edit-mode-hook'.
+That hook is where a buffer-local completion UI -- Corfu, say -- gets
+enabled for a buffer the user's global modes never reach: the buffer is
+set up with `delay-mode-hooks', so its major mode's hooks are delayed and
+then dropped with the buffer, and global minor modes riding on
+`after-change-major-mode-hook' never see it either."
+  ;; `let*' matters here: an init form is evaluated in the enclosing
+  ;; environment, so with a plain `let' the hook would record into some
+  ;; other binding of SEEN and the assertion would pass on nothing.
+  (let* ((vr/engine 'rx)
+         (vr--in-minibuffer 'vr--minibuffer-regexp)
+         (visual-regexp-rx-use-editing-buffer t)
+         (vr--last-minibuffer-contents "")
+         (seen nil)
+         (fn (lambda ()
+               (setq seen (list (buffer-name) visual-regexp-rx-edit-mode)))))
+    (cl-letf (((symbol-function 'vr--show-feedback) (lambda (&rest _) nil)))
+      (add-hook 'visual-regexp-rx-edit-mode-hook fn)
+      (unwind-protect
+          (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
+            (should (equal seen (list (buffer-name buffer) t))))
+        (remove-hook 'visual-regexp-rx-edit-mode-hook fn)
+        (visual-regexp-rx--edit-buffer-teardown)))))
+
 (ert-deftest vrx-tests-edit-buffer-mode-custom ()
   "`visual-regexp-rx-edit-buffer-mode' selects the major mode."
   (let ((vr/engine 'rx)
@@ -780,6 +805,9 @@ window must not be left behind either."
           (should-not visual-regexp-rx--edit-active)
           (should-not visual-regexp-rx--editing-buffer)
           (should-not (get-buffer visual-regexp-rx--edit-buffer-name))
+          ;; A dead window is still a window, so this shows the window
+          ;; was really there rather than missed by a lookup.
+          (should (windowp window))
           (should-not (window-live-p window)))
       (when (window-live-p window) (delete-window window))
       (visual-regexp-rx--edit-buffer-teardown))))
