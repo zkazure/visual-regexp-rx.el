@@ -560,9 +560,13 @@ to minibuffers."
 (defun visual-regexp-rx--editing-minibuffer-message (orig message &rest args)
   "Show MESSAGE in the editing buffer instead of the echo area.
 ORIG is `vr--minibuffer-message' and ARGS are its arguments.  When
-the editing buffer is not in use, the message is displayed exactly
+the editing buffer is not in use, or when another minibuffer is
+open in the middle of a session, the message is displayed exactly
 as visual-regexp displays it."
-  (if (not visual-regexp-rx--edit-active)
+  (if (not (and visual-regexp-rx--edit-active
+                ;; The editing buffer is never a minibuffer, so a
+                ;; message raised from one belongs to that minibuffer.
+                (not (minibufferp))))
       (apply orig message args)
     (setq visual-regexp-rx--edit-message
           (if args (apply #'format message args) message))
@@ -570,6 +574,38 @@ as visual-regexp displays it."
 
 (advice-add 'vr--minibuffer-message :around
             #'visual-regexp-rx--editing-minibuffer-message)
+
+;; The editing buffer stands in for visual-regexp's regexp prompt, so
+;; `vr--in-minibuffer' still names the regexp stage and visual-regexp's
+;; two session hooks stay installed while it is in use.  Any minibuffer
+;; opened in the meantime -- by `execute-extended-command',
+;; `eval-expression', a `completing-read' -- is therefore mistaken for
+;; that prompt.  The two advices below keep it out of the session; they
+;; are inert as soon as the editing buffer is torn down, which happens
+;; before the replacement prompt is read.
+
+(defun visual-regexp-rx--editing-skip-minibuffer-setup (orig)
+  "Do nothing while another minibuffer is opened during a session.
+ORIG is `vr--minibuffer-setup'.  Left alone, it would rewrite the
+prompt of that minibuffer as visual-regexp's own and show
+visual-regexp's help in it."
+  (unless visual-regexp-rx--edit-active
+    (funcall orig)))
+
+(advice-add 'vr--minibuffer-setup :around
+            #'visual-regexp-rx--editing-skip-minibuffer-setup)
+
+(defun visual-regexp-rx--editing-skip-after-change (orig beg end len)
+  "Do nothing when another minibuffer changes during a session.
+ORIG is `vr--after-change'; BEG, END and LEN are the arguments it
+expects.  ORIG only acts in minibuffers, so left alone it would
+re-render the preview -- from the editing buffer -- while the user
+types into that other minibuffer."
+  (unless visual-regexp-rx--edit-active
+    (funcall orig beg end len)))
+
+(advice-add 'vr--after-change :around
+            #'visual-regexp-rx--editing-skip-after-change)
 
 (defun visual-regexp-rx--editing-get-regexp-string-full (orig)
   "Return the rx form being edited, or what ORIG returns.
@@ -887,12 +923,17 @@ compiles to a never-matching regexp, so the first rendering
 highlights nothing.
 
 In rx mode the completion at point function is registered as
-well; see `visual-regexp-rx-completion'."
-  (visual-regexp-rx--setup-completion)
-  (if (and (eq vr/engine 'rx)
-           (eq vr--in-minibuffer 'vr--minibuffer-regexp))
-      (visual-regexp-rx--prefill)
-    (visual-regexp-rx--clear-pristine)))
+well; see `visual-regexp-rx-completion'.
+
+Nothing is done while the editing buffer is in use: visual-regexp
+is still in its regexp stage, but a minibuffer being set up then is
+not its prompt."
+  (unless visual-regexp-rx--edit-active
+    (visual-regexp-rx--setup-completion)
+    (if (and (eq vr/engine 'rx)
+             (eq vr--in-minibuffer 'vr--minibuffer-regexp))
+        (visual-regexp-rx--prefill)
+      (visual-regexp-rx--clear-pristine))))
 
 (add-hook 'minibuffer-setup-hook #'visual-regexp-rx--minibuffer-setup)
 

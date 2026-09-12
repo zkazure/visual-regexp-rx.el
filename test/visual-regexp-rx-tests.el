@@ -976,7 +976,64 @@ replacement prompt in the minibuffer, and the real replacement."
         (kill-buffer target))
       (visual-regexp-rx--edit-buffer-teardown))))
 
+(ert-deftest vrx-tests-edit-foreign-minibuffer-ignored ()
+  "Another minibuffer opened during a session is left alone.
+`vr--in-minibuffer' stays at the regexp stage while the editing buffer
+is in use, so without this visual-regexp's setup and change hooks
+would take any minibuffer -- the one M-x opens, M-:, a
+`completing-read' -- for visual-regexp's own prompt: they would
+prefill it, register the rx completion in it and re-render the preview
+while the user types there."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (vr--calling-func 'vr--calling-func-query-replace)
+        (visual-regexp-rx-use-editing-buffer t)
+        (visual-regexp-rx-completion t)
+        (vr--last-minibuffer-contents "")
+        (visual-regexp-rx--editing-buffer nil)
+        (minibuffer (window-buffer (minibuffer-window)))
+        (feedback-calls 0)
+        (prompt-updates 0)
+        (visual-regexp-rx--edit-active t))
+    ;; `vr--interactive-get-args' installs these two for the session,
+    ;; which is what makes them a problem here.
+    (add-hook 'minibuffer-setup-hook 'vr--minibuffer-setup)
+    (add-hook 'after-change-functions 'vr--after-change)
+    (unwind-protect
+        (progn
+          ;; Opening a minibuffer runs `minibuffer-setup-hook'.
+          (cl-letf (((symbol-function 'vr--show-feedback)
+                     (lambda (&rest _) (setq feedback-calls (1+ feedback-calls))))
+                    ((symbol-function 'vr--update-minibuffer-prompt)
+                     (lambda () (setq prompt-updates (1+ prompt-updates)))))
+            (with-current-buffer minibuffer
+              (erase-buffer)
+              (run-hooks 'minibuffer-setup-hook))
+            (should (= prompt-updates 0))
+            (should (equal (with-current-buffer minibuffer (buffer-string)) ""))
+            (should-not (memq 'visual-regexp-rx--capf
+                              (buffer-local-value
+                               'completion-at-point-functions minibuffer)))
+            ;; Typing in that minibuffer must not render the preview;
+            ;; `after-change-functions' fires by itself on the insert.
+            (with-current-buffer minibuffer (insert "vr/"))
+            (should (= feedback-calls 0))
+            (should (= prompt-updates 0))))
+      (remove-hook 'minibuffer-setup-hook 'vr--minibuffer-setup)
+      (remove-hook 'after-change-functions 'vr--after-change)
+      (when (buffer-live-p minibuffer)
+        (with-current-buffer minibuffer (erase-buffer))))
+    ;; Once the session is over both hooks are used again.
+    (let ((visual-regexp-rx--edit-active nil))
+      (should (eq (visual-regexp-rx--editing-skip-minibuffer-setup
+                   (lambda () 'setup-ran))
+                  'setup-ran))
+      (should (eq (visual-regexp-rx--editing-skip-after-change
+                   (lambda (&rest _) 'change-ran) 1 2 0)
+                  'change-ran)))))
+
 (provide 'visual-regexp-rx-tests)
+
 
 
 
