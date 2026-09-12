@@ -158,6 +158,22 @@ The completion described above works in that buffer too, and it does not
 replace a completion the mode itself provides: with
 =emacs-lisp-mode= both are offered.
 
+A completion UI that is enabled per buffer has to be enabled in this one
+as well, and the mode hooks of your configuration do not reach it: the
+buffer is set up with =delay-mode-hooks= so that they stay out of it,
+which also keeps global minor modes such as =global-corfu-mode= away
+(=lisp-data-mode-hook= never runs here either).  The editing buffer's own
+minor mode hook is the way in:
+
+#+begin_src elisp
+;; show the rx candidates in a popup while the form is edited
+(add-hook 'visual-regexp-rx-edit-mode-hook #'corfu-mode)
+#+end_src
+
+The hook runs in the editing buffer, right when it is set up, so it takes
+effect before you type.  It also runs once more when the session ends, so
+keep it idempotent — =#'corfu-mode= is.
+
 * How it works
 
 Three around advices, one prefill hook, one completion function and one
