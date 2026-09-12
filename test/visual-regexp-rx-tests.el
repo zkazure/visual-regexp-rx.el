@@ -750,16 +750,22 @@ out, since these tests have no target buffer to render into."
       (should-not (get-buffer visual-regexp-rx--edit-buffer-name)))))
 
 (ert-deftest vrx-tests-edit-buffer-uses-side-window ()
-  "The editing buffer is shown in a bottom side window."
+  "The editing buffer is shown in a bottom side window.
+That is what keeps the target buffer, and with it the live preview,
+visible while the form is edited."
   (let ((vr/engine 'rx)
         (vr--in-minibuffer 'vr--minibuffer-regexp)
-        (visual-regexp-rx-use-editing-buffer t))
-    (cl-letf (((symbol-function 'recursive-edit) (lambda () nil)))
-      (unwind-protect
-          (progn
-            (visual-regexp-rx--read-in-buffer)
-            (should-not (get-buffer visual-regexp-rx--edit-buffer-name)))
-        (visual-regexp-rx--edit-buffer-teardown)))))
+        (visual-regexp-rx-use-editing-buffer t)
+        window)
+    (unwind-protect
+        (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
+          (setq window (visual-regexp-rx--edit-buffer-display buffer))
+          (should (window-live-p window))
+          (should (eq (window-parameter window 'window-side) 'bottom))
+          (should (eq (window-buffer window) buffer)))
+      (visual-regexp-rx--edit-buffer-teardown))
+    (should-not (window-live-p window))
+    (should-not (get-buffer visual-regexp-rx--edit-buffer-name))))
 
 (ert-deftest vrx-tests-edit-keymap-bindings ()
   "The editing buffer offers the minibuffer keys, but not `RET'."
