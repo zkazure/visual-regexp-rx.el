@@ -143,6 +143,9 @@ C-c C-p   toggle the replacement preview
 M-n, M-p  cycle earlier inputs
 #+end_src
 
+=C-c C-p= only does something once the form carries a search/replace
+pair, which =M-p= can bring in from the history.
+
 The buffer is in =visual-regexp-rx-edit-buffer-mode=, =lisp-data-mode= by
 default — the mode for data written in Lisp syntax, which gives Lisp
 indentation and parenthesis matching without the code semantics of
