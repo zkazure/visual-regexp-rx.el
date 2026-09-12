@@ -81,6 +81,9 @@ Beyond plain visual-regexp, this package adds:
     completed as in =isearch=.  Any completion UI built on
     =completion-at-point-functions= picks it up, and =C-M-i= completes
     on demand.
+- The form can be edited in a buffer of its own instead of the
+  minibuffer, with Lisp indentation and multi-line forms; see
+  [[*Edit the form in a buffer][Edit the form in a buffer]].
 
 For example:
 
@@ -96,6 +99,12 @@ For example:
 
 ;; prefill something you want to extend while typing
 (setq visual-regexp-rx-prefill-form "(seq \"TODO\" \"\")")
+
+;; edit the rx form in a buffer of its own instead of the minibuffer
+(setq visual-regexp-rx-use-editing-buffer t)
+
+;; ... in Emacs Lisp mode, with its font-locking and completion
+(setq visual-regexp-rx-edit-buffer-mode 'emacs-lisp-mode)
 #+end_src
 
 Everything else — the live preview, the query loop and all minibuffer
@@ -107,10 +116,46 @@ To customize, use =M-x customize-group [RET] visual-regexp=.  The =rx= choice
 is added to =vr/engine=; when visual-regexp-steroids is installed, its
 existing option is extended instead.
 
+* Edit the form in a buffer
+
+Long rx forms are easier to write with real editing: several lines, Lisp
+indentation, parenthesis matching and structural editing.  Turn that on
+with:
+
+#+begin_src elisp
+(setq visual-regexp-rx-use-editing-buffer t)
+#+end_src
+
+The regexp prompt then happens in a buffer of its own, shown in a side
+window below the target buffer so that the live preview stays visible.
+The form may span any number of lines — =RET= is a plain newline — and
+the buffer is prefilled like the minibuffer would be.  Only the regexp
+prompt is affected: the replacement prompt still uses the minibuffer.
+
+#+begin_src text
+C-c C-c   finish the input and hand it to visual-regexp
+C-c C-k   abort the whole command
+C-c ?     help
+C-c C-a   toggle showing all matches
+C-c C-p   toggle the replacement preview
+#+end_src
+
+The buffer is in =visual-regexp-rx-edit-buffer-mode=, =lisp-data-mode= by
+default — the mode for data written in Lisp syntax, which gives Lisp
+indentation and parenthesis matching without the code semantics of
+=emacs-lisp-mode=.  Set it to =emacs-lisp-mode= to get its
+font-locking and completion as well, or to =prog-mode= to keep it
+minimal (at the cost of indentation).  Its window height is
+=visual-regexp-rx-edit-buffer-height= (default =0.35=).
+
+The completion described above works in that buffer too, and it does not
+replace a completion the mode itself provides: with
+=emacs-lisp-mode= both are offered.
+
 * How it works
 
-One around advice, one prefill hook and one completion function, no new
-commands:
+Three around advices, one prefill hook, one completion function and one
+minor mode:
 
 - =vr--get-regexp-string= is advised =:around=: when =vr/engine= is =rx=,
   the minibuffer input is =read= as a Lisp structure and compiled with
@@ -135,6 +180,18 @@ commands:
   the head of a form, in a specific argument position, or inside a
   string.  In a string, dabbrev collects the words of =vr--target-buffer=
   that start with the text before point.
+- With =visual-regexp-rx-use-editing-buffer= non-nil, the rx form is read
+  from a buffer instead of the minibuffer: =vr--interactive-get-args= is
+  advised =:around= and shadows =read-from-minibuffer= with =cl-letf=,
+  for the dynamic extent of that call only, so no other caller of
+  =read-from-minibuffer= is affected.  Only the regexp prompt is
+  diverted; the replacement prompt still calls the real reader.
+- Three of visual-regexp's minibuffer couplings are replaced for that
+  buffer: its =after-change-functions= function is mirrored because it
+  only runs in minibuffers, the input is taken from the buffer instead
+  of =minibuffer-contents=, and the prompt and the messages of the
+  session go to the header line instead of the minibuffer and the echo
+  area.
 
 * Limitations
 
@@ -152,8 +209,13 @@ commands:
 - =vr/engine= is shared with visual-regexp-steroids; if steroids is loaded
   after this package it redefines the variable and overwrites the choice
   list (=rx= remains usable via =setq=).
-- Rx forms are typed on one line; build complex multi-line forms in a
-  scratch buffer and paste them in.
+- The editing buffer builds on more of visual-regexp's private API
+  (=vr--interactive-get-args=, =vr--get-regexp-string-full=,
+  =vr--minibuffer-message=, =vr--set-minibuffer-prompt=), and it has to
+  keep =vr--minibuffer-message-overlay= an overlay: visual-regexp's
+  cleanup deletes it without checking that it is one.
+- =C-c <letter>= is reserved for the user, so the editing buffer uses
+  =C-c C-a= and =C-c C-p= where the minibuffer uses =C-c a= and =C-c p=.
 - Forms are =read= and compiled with =rx-to-string=; don't write
   side-effecting code in them.
 

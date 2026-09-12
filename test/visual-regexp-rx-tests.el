@@ -455,5 +455,402 @@
             (should (member "group" (nth 2 (visual-regexp-rx--capf))))))
       (kill-buffer target))))
 
+(ert-deftest vrx-tests-edit-advices-installed ()
+  "The two around advices of the editing buffer are installed."
+  (should (advice-member-p #'visual-regexp-rx--around-interactive-get-args
+                           'vr--interactive-get-args))
+  (should (advice-member-p #'visual-regexp-rx--editing-get-regexp-string-full
+                           'vr--get-regexp-string-full))
+  (should (advice-member-p #'visual-regexp-rx--editing-minibuffer-message
+                           'vr--minibuffer-message)))
+
+(ert-deftest vrx-tests-edit-customs-defaults ()
+  "The editing buffer options exist with their documented defaults."
+  (should-not visual-regexp-rx-use-editing-buffer)
+  (should (eq visual-regexp-rx-edit-buffer-mode 'lisp-data-mode))
+  (should (equal visual-regexp-rx-edit-buffer-height 0.35))
+  (dolist (var '(visual-regexp-rx-use-editing-buffer
+                 visual-regexp-rx-edit-buffer-mode
+                 visual-regexp-rx-edit-buffer-height))
+    (should (member (list var 'custom-variable)
+                    (get 'visual-regexp 'custom-group)))))
+
+(ert-deftest vrx-tests-edit-enabled-p ()
+  "The editing buffer is used for the rx regexp prompt only."
+  (let ((visual-regexp-rx-use-editing-buffer t)
+        (vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp))
+    (should (visual-regexp-rx--editing-buffer-enabled-p)))
+  (let ((visual-regexp-rx-use-editing-buffer nil)
+        (vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp))
+    (should-not (visual-regexp-rx--editing-buffer-enabled-p)))
+  (let ((visual-regexp-rx-use-editing-buffer t)
+        (vr/engine 'emacs)
+        (vr--in-minibuffer 'vr--minibuffer-regexp))
+    (should-not (visual-regexp-rx--editing-buffer-enabled-p)))
+  (let ((visual-regexp-rx-use-editing-buffer t)
+        (vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-replace))
+    (should-not (visual-regexp-rx--editing-buffer-enabled-p))))
+
+(ert-deftest vrx-tests-edit-read-input-dispatch ()
+  "`visual-regexp-rx--read-input' picks the buffer or the minibuffer."
+  (let ((visual-regexp-rx-use-editing-buffer t)
+        (vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (fallback-called nil))
+    (cl-letf (((symbol-function 'visual-regexp-rx--read-in-buffer)
+               (lambda () "BUFFER")))
+      (should (equal (visual-regexp-rx--read-input
+                      (lambda (&rest _) (setq fallback-called t) "MINIBUFFER")
+                      nil)
+                     "BUFFER"))
+      (should-not fallback-called))
+    ;; The replacement prompt keeps using the minibuffer.
+    (let ((vr--in-minibuffer 'vr--minibuffer-replace))
+      (should (equal (visual-regexp-rx--read-input
+                      (lambda (&rest _) "MINIBUFFER") nil)
+                     "MINIBUFFER")))
+    ;; And so does everything when the option is off.
+    (let ((visual-regexp-rx-use-editing-buffer nil)
+          (vr--in-minibuffer 'vr--minibuffer-regexp))
+      (should (equal (visual-regexp-rx--read-input
+                      (lambda (&rest _) "MINIBUFFER") nil)
+                     "MINIBUFFER")))))
+
+(ert-deftest vrx-tests-edit-interactive-get-args-hijacks-read ()
+  "`vr--interactive-get-args' reads the regexp from the buffer.
+The shadowing of `read-from-minibuffer' is what makes the editing
+buffer work, so it is exercised through a stand-in for visual-regexp.
+It must not leak to the replacement prompt or to other callers."
+  (let ((visual-regexp-rx-use-editing-buffer t)
+        (vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp))
+    (cl-letf (((symbol-function 'visual-regexp-rx--read-in-buffer)
+               (lambda () "BUFFER"))
+              ;; Stands in for `real-read': the fallback path returns
+              ;; "MINIBUFFER" instead of prompting.
+              ((symbol-function 'read-from-minibuffer)
+               (lambda (&rest _) "MINIBUFFER")))
+      (should (equal (visual-regexp-rx--around-interactive-get-args
+                      (lambda (&rest _) (read-from-minibuffer "p: ")))
+                     "BUFFER"))
+      (let ((vr--in-minibuffer 'vr--minibuffer-replace))
+        (should (equal (visual-regexp-rx--around-interactive-get-args
+                        (lambda (&rest _) (read-from-minibuffer "p: ")))
+                       "MINIBUFFER")))))
+  ;; With the option off, the real reader is left alone.
+  (let ((visual-regexp-rx-use-editing-buffer nil)
+        (vr/engine 'rx))
+    (cl-letf (((symbol-function 'read-from-minibuffer)
+               (lambda (&rest _) "MINIBUFFER")))
+      (should (equal (visual-regexp-rx--around-interactive-get-args
+                      (lambda (&rest _) (read-from-minibuffer "p: ")))
+                     "MINIBUFFER")))))
+
+(defmacro vrx-tests--with-editing-buffer (&rest body)
+  "Run BODY against the rx editing buffer and tear it down."
+  (declare (indent 0) (debug t))
+  `(unwind-protect
+       (progn ,@body)
+     (visual-regexp-rx--edit-buffer-teardown)))
+
+(ert-deftest vrx-tests-edit-buffer-mode-and-prefill ()
+  "The editing buffer is set up in the configured mode and prefilled."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t)
+        (visual-regexp-rx--pristine nil))
+    (vrx-tests--with-editing-buffer
+      (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
+        (should (eq (buffer-local-value 'major-mode buffer) 'lisp-data-mode))
+        (should (equal (with-current-buffer buffer (buffer-string)) "(seq \"\")"))
+        (should (= (with-current-buffer buffer (point)) 7))
+        (should (buffer-local-value 'electric-indent-mode buffer))
+        (should (buffer-local-value 'visual-regexp-rx-edit-mode buffer))
+        (should visual-regexp-rx--pristine)
+        ;; Multi-line forms are indented like any other Lisp data.
+        (with-current-buffer buffer
+          (erase-buffer)
+          (insert "(seq \"a\"\n(+ digit)\n)")
+          (indent-region (point-min) (point-max))
+          (should (equal (buffer-string) "(seq \"a\"\n     (+ digit)\n     )")))))))
+
+(ert-deftest vrx-tests-edit-buffer-enables-indent ()
+  "RET indents in the editing buffer even with the global mode off."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t)
+        (global electric-indent-mode))
+    (unwind-protect
+        (progn
+          (set-default 'electric-indent-mode nil)
+          (vrx-tests--with-editing-buffer
+            (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
+              (should (buffer-local-value 'electric-indent-mode buffer)))))
+      (set-default 'electric-indent-mode global))))
+
+(ert-deftest vrx-tests-edit-buffer-empty-prefill ()
+  "An empty prefill form leaves the editing buffer empty."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t)
+        (visual-regexp-rx-prefill-form "")
+        (visual-regexp-rx--pristine t))
+    (vrx-tests--with-editing-buffer
+      (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
+        (should (equal (with-current-buffer buffer (buffer-string)) ""))
+        (should (= (with-current-buffer buffer (point)) (point-min)))
+        (should-not visual-regexp-rx--pristine)))))
+
+(ert-deftest vrx-tests-edit-buffer-mode-custom ()
+  "`visual-regexp-rx-edit-buffer-mode' selects the major mode."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t)
+        (visual-regexp-rx-edit-buffer-mode 'prog-mode))
+    (vrx-tests--with-editing-buffer
+      (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
+        (should (eq (buffer-local-value 'major-mode buffer) 'prog-mode))))))
+
+(ert-deftest vrx-tests-edit-get-regexp-string-full ()
+  "The regexp is read from the editing buffer while it is in use."
+  (let ((orig (lambda () "ORIG"))
+        (vr--in-minibuffer 'vr--minibuffer-regexp))
+    (let ((visual-regexp-rx--edit-active nil)
+          (visual-regexp-rx--editing-buffer nil))
+      (should (equal (visual-regexp-rx--editing-get-regexp-string-full orig)
+                     "ORIG")))
+    (let ((buffer (generate-new-buffer " *vrx-edit*")))
+      (unwind-protect
+          (progn
+            (with-current-buffer buffer (insert "(seq \"a\")"))
+            (let ((visual-regexp-rx--edit-active t)
+                  (visual-regexp-rx--editing-buffer buffer))
+              (should (equal
+                       (visual-regexp-rx--editing-get-regexp-string-full orig)
+                       "(seq \"a\")"))
+              ;; A dead buffer never wins over the original.
+              (kill-buffer buffer)
+              (should (equal
+                       (visual-regexp-rx--editing-get-regexp-string-full orig)
+                       "ORIG"))))
+        (when (buffer-live-p buffer) (kill-buffer buffer))))))
+
+(ert-deftest vrx-tests-edit-after-change-rerenders ()
+  "Changes in the editing buffer re-render the preview exactly once."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t)
+        (vr--last-minibuffer-contents "")
+        (renders 0))
+    (vrx-tests--with-editing-buffer
+      (cl-letf (((symbol-function 'vr--show-feedback)
+                 (lambda (&rest _) (setq renders (1+ renders))))
+                ((symbol-function 'visual-regexp-rx--update-header)
+                 (lambda () nil)))
+        (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
+          (setq visual-regexp-rx--edit-active t)
+          ;; The prefill itself renders once, which is what suppresses
+          ;; the empty-match flood of the pristine prefill.
+          (should (= renders 1))
+          (should (equal vr--last-minibuffer-contents "(seq \"\")"))
+          (with-current-buffer buffer
+            (goto-char (point-max))
+            (insert "TODO"))
+          (should (= renders 2))
+          (should (equal vr--last-minibuffer-contents "(seq \"\")TODO"))
+          ;; A no-op change does not render again.
+          (with-current-buffer buffer
+            (visual-regexp-rx--edit-after-change))
+          (should (= renders 2)))))))
+
+(ert-deftest vrx-tests-edit-after-change-inactive ()
+  "Nothing is rendered while the editing buffer is not in use."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (vr--last-minibuffer-contents "")
+        (renders 0))
+    (with-temp-buffer
+      (insert "(seq \"a\")")
+      (cl-letf (((symbol-function 'vr--show-feedback)
+                 (lambda (&rest _) (setq renders (1+ renders)))))
+        (visual-regexp-rx--edit-after-change)
+        (should (= renders 0))
+        (should (equal vr--last-minibuffer-contents ""))
+        (let ((visual-regexp-rx--edit-active t))
+          (visual-regexp-rx--edit-after-change)
+          (should (= renders 1)))))))
+
+(ert-deftest vrx-tests-edit-message-goes-to-header ()
+  "Messages of the editing session land in the header line."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (vr--calling-func 'vr--calling-func-query-replace)
+        (visual-regexp-rx-use-editing-buffer t)
+        (visual-regexp-rx--edit-message nil))
+    (vrx-tests--with-editing-buffer
+      (let* ((buffer (visual-regexp-rx--edit-buffer-setup))
+             (orig (lambda (message &rest _) message)))
+        (let ((visual-regexp-rx--edit-active t))
+          (visual-regexp-rx--editing-minibuffer-message orig "3 matches")
+          (should (equal visual-regexp-rx--edit-message "3 matches"))
+          (let ((header (buffer-local-value 'header-line-format buffer)))
+            (should (string-match-p "3 matches" header))
+            (should (string-match-p "Query replace" header))))
+        ;; Outside the editing session the original is called.
+        (let ((visual-regexp-rx--edit-active nil))
+          (should (equal (visual-regexp-rx--editing-minibuffer-message
+                          orig "other" "arg")
+                         "other")))))))
+
+(ert-deftest vrx-tests-edit-read-in-buffer-returns-contents ()
+  "The edited form is returned, and the buffer is cleaned up."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t))
+    (cl-letf (((symbol-function 'recursive-edit)
+               (lambda () (erase-buffer) (insert "(seq \"a\" (+ digit))")))
+              ((symbol-function 'visual-regexp-rx--edit-buffer-display)
+               (lambda (_buffer) nil)))
+      (let ((result (visual-regexp-rx--read-in-buffer)))
+        (should (equal result "(seq \"a\" (+ digit))"))
+        (should-not visual-regexp-rx--edit-active)
+        (should-not visual-regexp-rx--editing-buffer)
+        (should-not (get-buffer visual-regexp-rx--edit-buffer-name))))))
+
+(ert-deftest vrx-tests-edit-read-in-buffer-abort ()
+  "`C-c C-k' aborts the command with `quit'."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t)
+        (visual-regexp-rx--edit-aborted nil))
+    (cl-letf (((symbol-function 'recursive-edit)
+               (lambda () (setq visual-regexp-rx--edit-aborted t)))
+              ((symbol-function 'visual-regexp-rx--edit-buffer-display)
+               (lambda (_buffer) nil)))
+      (let ((quit-signalled nil))
+        (condition-case nil
+            (visual-regexp-rx--read-in-buffer)
+          (quit (setq quit-signalled t)))
+        (should quit-signalled))
+      (should-not visual-regexp-rx--edit-active)
+      (should-not (get-buffer visual-regexp-rx--edit-buffer-name)))))
+
+(ert-deftest vrx-tests-edit-buffer-uses-side-window ()
+  "The editing buffer is shown in a bottom side window."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t))
+    (cl-letf (((symbol-function 'recursive-edit) (lambda () nil)))
+      (unwind-protect
+          (progn
+            (visual-regexp-rx--read-in-buffer)
+            (should-not (get-buffer visual-regexp-rx--edit-buffer-name)))
+        (visual-regexp-rx--edit-buffer-teardown)))))
+
+(ert-deftest vrx-tests-edit-keymap-bindings ()
+  "The editing buffer offers the minibuffer keys, but not `RET'."
+  (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c C-c"))
+              #'visual-regexp-rx-edit-finish))
+  (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c C-k"))
+              #'visual-regexp-rx-edit-abort))
+  (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c ?"))
+              #'vr--minibuffer-help))
+  (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c C-a"))
+              #'vr--shortcut-toggle-limit))
+  (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c C-p"))
+              #'visual-regexp-rx--edit-toggle-preview))
+  ;; `C-c <letter>' is reserved for the user, so it must stay free.
+  (should-not (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c a")))
+  (should-not (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c p")))
+  (should-not (lookup-key visual-regexp-rx-edit-mode-map (kbd "RET"))))
+
+(ert-deftest vrx-tests-edit-completion-not-overridden ()
+  "Completion is added to the editing buffer without dropping others."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t)
+        (visual-regexp-rx-completion t))
+    (vrx-tests--with-editing-buffer
+      ;; The default mode has no completion, so ours is the only one.
+      (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
+        (should (buffer-local-value 'completion-at-point-functions buffer))
+        (should (memq #'visual-regexp-rx--capf
+                      (buffer-local-value 'completion-at-point-functions buffer))))
+      (visual-regexp-rx--edit-buffer-teardown)
+      ;; A mode that brings its own completion keeps it.
+      (let ((visual-regexp-rx-edit-buffer-mode 'emacs-lisp-mode))
+        (let ((buffer (visual-regexp-rx--edit-buffer-setup))
+              (capfs nil))
+          (setq capfs (buffer-local-value 'completion-at-point-functions buffer))
+          (should (memq #'visual-regexp-rx--capf capfs))
+          (should (memq 'elisp-completion-at-point capfs)))))))
+
+(ert-deftest vrx-tests-edit-integration-end-to-end ()
+  "`vr--interactive-get-args' takes the regexp from the editing buffer.
+This drives the real call path of visual-regexp: the advice shadows
+its minibuffer reader, the form is edited in a side window, the live
+preview runs for real, and the replacement prompt still goes
+through the minibuffer.  Only `recursive-edit' is stubbed, since the
+test cannot wait for keys."
+  (let ((vr/engine 'rx)
+        (visual-regexp-rx-use-editing-buffer t)
+        (vr--in-minibuffer nil)
+        (vr--calling-func nil)
+        (target (generate-new-buffer "*vrx-e2e-target*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer target
+            (insert "TODO fix the login bug\nTODO write the docs"))
+          (switch-to-buffer target)
+          (cl-letf (((symbol-function 'recursive-edit)
+                     (lambda ()
+                       (erase-buffer)
+                       (insert "(seq \"TODO\" (+ blank) (group (+ nonl)))")))
+                    ;; The replacement prompt is not under test; the
+                    ;; advice must hand it back to this reader.
+                    ((symbol-function 'read-from-minibuffer)
+                     (lambda (&rest _) "DONE \\1")))
+            (let ((args (vr--interactive-get-args
+                         'vr--mode-regexp-replace
+                         'vr--calling-func-query-replace)))
+              (should (equal (nth 0 args)
+                             "(seq \"TODO\" (+ blank) (group (+ nonl)))"))
+              (should (equal (nth 1 args) "DONE \\1"))))
+          ;; The edited form went into the from history.
+          (should (member "(seq \"TODO\" (+ blank) (group (+ nonl)))"
+                          (symbol-value vr/query-replace-from-history-variable)))
+          ;; And the editing buffer is gone again.
+          (should-not (get-buffer visual-regexp-rx--edit-buffer-name)))
+      (when (buffer-live-p target)
+        (with-current-buffer target (set-buffer-modified-p nil))
+        (kill-buffer target))
+      (visual-regexp-rx--edit-buffer-teardown))))
+
+(ert-deftest vrx-tests-edit-message-overlay-is-real ()
+  "The overlay visual-regexp deletes without checking is never nil.
+`vr--interactive-get-args' runs `(unless (overlayp OVERLAY)
+(delete-overlay OVERLAY))' when it finishes, and `delete-overlay'
+rejects nil, so an editing session must leave an overlay behind."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t)
+        (vr--minibuffer-message-overlay nil))
+    (let (overlay)
+      (vrx-tests--with-editing-buffer
+        (visual-regexp-rx--edit-buffer-setup)
+        (setq overlay vr--minibuffer-message-overlay)
+        (should (overlayp overlay))
+        (should (overlay-start overlay)))
+      ;; The buffer it lived in is gone by then, and a dead overlay is
+      ;; still an overlay as far as visual-regexp's cleanup is
+      ;; concerned.
+      (should-not (overlay-start overlay)))))
+
 (provide 'visual-regexp-rx-tests)
+
+
+
 ;;; visual-regexp-rx-tests.el ends here
