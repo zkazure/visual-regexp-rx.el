@@ -267,5 +267,135 @@
   (should (equal (visual-regexp-rx--fill-empty nil) '(seq)))
   (should (equal (visual-regexp-rx--fill-empty "string") "string")))
 
+(ert-deftest vrx-tests-completion-custom-default ()
+  "The completion option exists with its documented default."
+  (should (eq visual-regexp-rx-completion t))
+  (should (member '(visual-regexp-rx-completion custom-variable)
+                  (get 'visual-regexp 'custom-group))))
+
+(ert-deftest vrx-tests-completion-registered-in-regexp-minibuffer ()
+  "The rx regexp minibuffer gets a buffer-local completion function."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx--pristine nil))
+    (with-temp-buffer
+      (visual-regexp-rx--minibuffer-setup)
+      (should (local-variable-p 'completion-at-point-functions))
+      (should (memq #'visual-regexp-rx--capf completion-at-point-functions)))))
+
+(ert-deftest vrx-tests-completion-not-registered-other-stages ()
+  "Completion is only registered in the rx regexp minibuffer."
+  (dolist (case '((emacs . vr--minibuffer-regexp)
+                  (rx . vr--minibuffer-replace)))
+    (let ((vr/engine (car case))
+          (vr--in-minibuffer (cdr case))
+          (visual-regexp-rx--pristine nil))
+      (with-temp-buffer
+        (visual-regexp-rx--minibuffer-setup)
+        (should-not (memq #'visual-regexp-rx--capf
+                          completion-at-point-functions)))))
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-completion nil)
+        (visual-regexp-rx--pristine nil))
+    (with-temp-buffer
+      (visual-regexp-rx--minibuffer-setup)
+      (should-not (memq #'visual-regexp-rx--capf
+                        completion-at-point-functions)))))
+
+(ert-deftest vrx-tests-completion-head-position ()
+  "At the head of a list, all rx names are offered."
+  (with-temp-buffer
+    (insert "(seq \"a\" (gr")
+    (goto-char (point-max))
+    (let ((candidates (nth 2 (visual-regexp-rx--name-capf))))
+      (should (member "group" candidates))
+      (should (member "group-n" candidates))
+      (should (member "seq" candidates)))))
+
+(ert-deftest vrx-tests-completion-position-filters ()
+  "Argument position restricts the offered names."
+  (with-temp-buffer
+    (insert "(seq (syntax wh")
+    (goto-char (point-max))
+    (let ((candidates (nth 2 (visual-regexp-rx--name-capf))))
+      (should (member "whitespace" candidates))
+      (should-not (member "group" candidates))))
+  (with-temp-buffer
+    (insert "(seq (category ch")
+    (goto-char (point-max))
+    (should (member "chinese" (nth 2 (visual-regexp-rx--name-capf)))))
+  (with-temp-buffer
+    (insert "(seq (any bl")
+    (goto-char (point-max))
+    (let ((candidates (nth 2 (visual-regexp-rx--name-capf))))
+      (should (member "blank" candidates))
+      (should-not (member "group" candidates)))))
+
+(ert-deftest vrx-tests-completion-defined-names ()
+  "Names defined with `rx-define' are offered and labelled."
+  (unwind-protect
+      (progn
+        (rx-define vrx-tests-thing (seq "x"))
+        (with-temp-buffer
+          (insert "(seq vrx-tests-th")
+          (goto-char (point-max))
+          (should (member "vrx-tests-thing"
+                          (nth 2 (visual-regexp-rx--name-capf)))))
+        (should (equal (visual-regexp-rx--label "vrx-tests-thing")
+                       "rx-define"))
+        (should (string-match-p "rx-define"
+                                (visual-regexp-rx--doc-string
+                                 "vrx-tests-thing"))))
+    (put 'vrx-tests-thing 'rx-definition nil)))
+
+(ert-deftest vrx-tests-completion-label-and-kind ()
+  "Candidates carry their rx kind."
+  (should (equal (visual-regexp-rx--label "blank") "class"))
+  (should (equal (visual-regexp-rx--label "group") "form"))
+  (should (equal (visual-regexp-rx--label "string-quote") "syntax"))
+  (should (equal (visual-regexp-rx--label "chinese") "category"))
+  (should (equal (visual-regexp-rx--label "nonl") "symbol"))
+  (should (eq (visual-regexp-rx--kind "blank") 'constant))
+  (should (eq (visual-regexp-rx--kind "group") 'function))
+  (should (eq (visual-regexp-rx--kind "string-quote") 'keyword))
+  (should (equal (visual-regexp-rx--annotate "blank") " class"))
+  ;; `whitespace' is both a character class and a syntax code, so the
+  ;; label depends on the operator around point.
+  (should (equal (visual-regexp-rx--label "whitespace") "class"))
+  (should (equal (let ((visual-regexp-rx--completion-operator 'syntax))
+                   (visual-regexp-rx--label "whitespace"))
+                 "syntax"))
+  (should (equal (let ((visual-regexp-rx--completion-operator 'any))
+                   (visual-regexp-rx--label "whitespace"))
+                 "class")))
+
+(ert-deftest vrx-tests-completion-documentation ()
+  "Candidates have documentation text and a documentation buffer."
+  (should (string-match-p "\\[\\[:blank:\\]\\]"
+                          (visual-regexp-rx--doc-string "blank")))
+  (should (string-match-p "(group" (visual-regexp-rx--doc-string "group")))
+  (should (string-match-p "syntax"
+                          (visual-regexp-rx--doc-string "string-quote")))
+  (should (bufferp (visual-regexp-rx--doc-buffer "group")))
+  (kill-buffer " *visual-regexp-rx-doc*"))
+
+(ert-deftest vrx-tests-completion-dispatch ()
+  "`visual-regexp-rx--capf' only completes in the rx minibuffer."
+  (let ((vr/engine 'emacs)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-completion t))
+    (with-temp-buffer
+      (insert "(seq gr")
+      (goto-char (point-max))
+      (should-not (visual-regexp-rx--capf))))
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-completion t))
+    (with-temp-buffer
+      (insert "(seq gr")
+      (goto-char (point-max))
+      (should (member "group" (nth 2 (visual-regexp-rx--capf)))))))
+
 (provide 'visual-regexp-rx-tests)
 ;;; visual-regexp-rx-tests.el ends here

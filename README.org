@@ -69,6 +69,16 @@ Beyond plain visual-regexp, this package adds:
     whether the untouched prefill is kept from highlighting anything.
     Set it to =nil= to let the prefill render as visual-regexp would,
     i.e. an empty-match marker at every buffer position.
+  - =visual-regexp-rx-completion= (boolean, default =t=): whether the
+    minibuffer offers completion at point while you type an rx form.
+    The candidates are the built-in rx names — filtered by their
+    position in the form, so =(syntax ...)= only offers syntax codes,
+    =(any ...)= only character classes, and so on — plus the names you
+    defined with =rx-define=.  Each candidate is annotated with its
+    kind, and the popup info (Corfu's =corfu-popupinfo= or =M-h=) shows
+    what it means.  Any completion UI built on
+    =completion-at-point-functions= picks it up, and =C-M-i= completes
+    on demand.
 
 For example:
 
@@ -78,6 +88,9 @@ For example:
 
 ;; do not suppress the empty-match markers of the untouched prefill
 (setq visual-regexp-rx-suppress-empty-highlight nil)
+
+;; no completion at point in the rx minibuffer
+(setq visual-regexp-rx-completion nil)
 
 ;; prefill something you want to extend while typing
 (setq visual-regexp-rx-prefill-form "(seq \"TODO\" \"\")")
@@ -94,7 +107,8 @@ existing option is extended instead.
 
 * How it works
 
-One around advice and one prefill hook (about 100 lines), no new commands:
+One around advice, one prefill hook and one completion function, no new
+commands:
 
 - =vr--get-regexp-string= is advised =:around=: when =vr/engine= is =rx=,
   the minibuffer input is =read= as a Lisp structure and compiled with
@@ -110,11 +124,24 @@ One around advice and one prefill hook (about 100 lines), no new commands:
   replaced by a never-matching regexp.
 - Conversion errors are re-signalled as =invalid-regexp= and shown by
   visual-regexp's own error display.
+- In rx mode the same =minibuffer-setup-hook= adds a buffer-local
+  =completion-at-point-functions= entry (and removes it again on the
+  other minibuffers, e.g. the replacement prompt).  The candidates come
+  from rx's own tables (=rx--builtin-forms=, =rx--builtin-symbols=,
+  =rx--char-classes=, =rx--syntax-codes=, =rx--categories=) and from the
+  =rx-definition= properties; =syntax-ppss= decides whether point is at
+  the head of a form, in a specific argument position, or inside a
+  string.
 
 * Limitations
 
 - Relies on visual-regexp's private API =vr--get-regexp-string= (verified
   with version 1.1; check the visual-regexp source for future versions).
+- Completion reads rx's private name tables (=rx--builtin-forms=,
+  =rx--builtin-symbols=, =rx--char-classes=, =rx--syntax-codes=,
+  =rx--categories=) and the =rx-definition= symbol property; these are
+  stable across the Emacs versions this package supports (verified with
+  28.1, 29.4, 30.1 and 32), but they are not part of rx's public API.
 - =vr/engine= is shared with visual-regexp-steroids; if steroids is loaded
   after this package it redefines the variable and overwrites the choice
   list (=rx= remains usable via =setq=).
