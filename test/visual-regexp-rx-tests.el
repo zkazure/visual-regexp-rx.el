@@ -397,5 +397,63 @@
       (goto-char (point-max))
       (should (member "group" (nth 2 (visual-regexp-rx--capf)))))))
 
+(ert-deftest vrx-tests-completion-buffer-words ()
+  "Inside a string, words from the searched buffer are offered."
+  (let* ((target (generate-new-buffer " *vrx-target*"))
+         (vr--target-buffer target))
+    (unwind-protect
+        (progn
+          (with-current-buffer target
+            (insert "TODO fix the login bug"))
+          (with-temp-buffer
+            (insert "(seq \"TO")
+            (goto-char (point-max))
+            (let ((capf (visual-regexp-rx--word-capf)))
+              (should capf)
+              (should (equal (nth 0 capf) 7))
+              (should (equal (nth 1 capf) 9))
+              (should (member "TODO" (nth 2 capf)))))
+          (with-temp-buffer
+            (insert "(seq \"lo")
+            (goto-char (point-max))
+            (should (member "login"
+                            (nth 2 (visual-regexp-rx--word-capf))))))
+      (kill-buffer target))))
+
+(ert-deftest vrx-tests-completion-word-capf-nil-cases ()
+  "No words are offered without a prefix or without a target buffer."
+  (let ((vr--target-buffer nil))
+    (with-temp-buffer
+      (insert "(seq \"")
+      (goto-char (point-max))
+      (should-not (visual-regexp-rx--word-capf)))
+    (with-temp-buffer
+      (insert "(seq \"TO")
+      (goto-char (point-max))
+      (should-not (visual-regexp-rx--word-capf)))))
+
+(ert-deftest vrx-tests-capf-string-dispatch ()
+  "`visual-regexp-rx--capf' completes buffer words inside strings."
+  (let* ((target (generate-new-buffer " *vrx-target*"))
+         (vr--target-buffer target)
+         (vr/engine 'rx)
+         (vr--in-minibuffer 'vr--minibuffer-regexp)
+         (visual-regexp-rx-completion t))
+    (unwind-protect
+        (progn
+          (with-current-buffer target
+            (insert "TODO fix the login bug"))
+          (with-temp-buffer
+            (insert "(seq \"TO")
+            (goto-char (point-max))
+            (let ((capf (visual-regexp-rx--capf)))
+              (should capf)
+              (should (member "TODO" (nth 2 capf)))))
+          (with-temp-buffer
+            (insert "(seq gr")
+            (goto-char (point-max))
+            (should (member "group" (nth 2 (visual-regexp-rx--capf))))))
+      (kill-buffer target))))
+
 (provide 'visual-regexp-rx-tests)
 ;;; visual-regexp-rx-tests.el ends here

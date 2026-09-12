@@ -45,6 +45,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'dabbrev)
 (require 'rx)
 (require 'visual-regexp)
 
@@ -121,7 +122,13 @@ completes on demand.
 
 The candidates are the built-in rx names plus the names defined
 with `rx-define'.  They are filtered by their position in the
-form, e.g. `(syntax ...)' only offers syntax codes."
+form, e.g. `(syntax ...)' only offers syntax codes.
+
+Inside a string literal, words from the buffer being searched
+are offered instead, so the text to match can be completed as in
+`isearch'.  That re-scans the buffer on every completion
+request, so set this option to nil if it is too slow on large
+buffers."
   :type 'boolean
   :group 'visual-regexp)
 
@@ -359,14 +366,78 @@ Names that are both a character class and a syntax code, such as
           :company-kind #'visual-regexp-rx--kind
           :company-doc-buffer #'visual-regexp-rx--doc-buffer)))
 
+(defconst visual-regexp-rx--word-limit 200
+  "Maximum number of words offered from the searched buffer.")
+
+(defun visual-regexp-rx--word-bounds ()
+  "Return the bounds of the word around point inside a string.
+Return nil when there is no word character at point."
+  (let ((regexp (or dabbrev-abbrev-char-regexp "\\sw\\|\\s_"))
+        (limit (if (minibufferp) (minibuffer-prompt-end) (point-min))))
+    (when (or (looking-at regexp)
+              (and (> (point) limit)
+                   (save-excursion (forward-char -1) (looking-at regexp))))
+      (cons (save-excursion
+              (while (and (> (point) limit)
+                          (save-excursion (forward-char -1)
+                                          (looking-at regexp)))
+                (forward-char -1))
+              (point))
+            (save-excursion
+              (while (looking-at regexp)
+                (forward-char 1))
+              (point))))))
+
+(defun visual-regexp-rx--buffer-words (prefix)
+  "Return the words of the searched buffer that start with PREFIX.
+The words come from `vr--target-buffer', the buffer visual-regexp
+is operating on, using dabbrev's own rules."
+  (when (buffer-live-p vr--target-buffer)
+    (let ((dabbrev-check-other-buffers nil)
+          (dabbrev-check-all-buffers nil)
+          (dabbrev-backward-only nil)
+          (dabbrev-limit nil)
+          (dabbrev-search-these-buffers-only (list vr--target-buffer))
+          (inhibit-message t)
+          (message-log-max nil)
+          (inhibit-redisplay t))
+      (dabbrev--reset-global-variables)
+      (seq-take (dabbrev--find-all-expansions prefix case-fold-search)
+                visual-regexp-rx--word-limit))))
+
+(defun visual-regexp-rx--word-annotate (name)
+  "Return the annotation shown after the buffer word NAME."
+  (ignore name)
+  " buffer")
+
+(defun visual-regexp-rx--word-kind (name)
+  "Return the `:company-kind' of the buffer word NAME."
+  (ignore name)
+  'text)
+
+(defun visual-regexp-rx--word-capf ()
+  "Complete a word from the searched buffer inside a string.
+Return nil when point is not on a word inside a string."
+  (let ((bounds (visual-regexp-rx--word-bounds)))
+    (when (and bounds (< (car bounds) (cdr bounds)))
+      (let ((words (visual-regexp-rx--buffer-words
+                    (buffer-substring-no-properties
+                     (car bounds) (cdr bounds)))))
+        (when words
+          (list (car bounds) (cdr bounds) words
+                :annotation-function #'visual-regexp-rx--word-annotate
+                :company-kind #'visual-regexp-rx--word-kind))))))
+
 (defun visual-regexp-rx--capf ()
-  "Complete the rx name at point.
+  "Complete an rx name or a buffer word at point.
 Return a `completion-at-point-functions' entry, or nil when
 completion is disabled or point is not in an rx context."
   (when (and visual-regexp-rx-completion
              (eq vr/engine 'rx)
              (eq vr--in-minibuffer 'vr--minibuffer-regexp))
-    (visual-regexp-rx--name-capf)))
+    (if (nth 3 (syntax-ppss))
+        (visual-regexp-rx--word-capf)
+      (visual-regexp-rx--name-capf))))
 
 (defun visual-regexp-rx--setup-completion ()
   "Register or unregister rx completion for this minibuffer.

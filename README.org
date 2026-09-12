@@ -76,7 +76,9 @@ Beyond plain visual-regexp, this package adds:
     =(any ...)= only character classes, and so on — plus the names you
     defined with =rx-define=.  Each candidate is annotated with its
     kind, and the popup info (Corfu's =corfu-popupinfo= or =M-h=) shows
-    what it means.  Any completion UI built on
+    what it means.  Inside a string literal, words from the buffer
+    being searched are offered instead, so the text to match can be
+    completed as in =isearch=.  Any completion UI built on
     =completion-at-point-functions= picks it up, and =C-M-i= completes
     on demand.
 
@@ -131,7 +133,8 @@ commands:
   =rx--char-classes=, =rx--syntax-codes=, =rx--categories=) and from the
   =rx-definition= properties; =syntax-ppss= decides whether point is at
   the head of a form, in a specific argument position, or inside a
-  string.
+  string.  In a string, dabbrev collects the words of =vr--target-buffer=
+  that start with the text before point.
 
 * Limitations
 
@@ -142,6 +145,10 @@ commands:
   =rx--categories=) and the =rx-definition= symbol property; these are
   stable across the Emacs versions this package supports (verified with
   28.1, 29.4, 30.1 and 32), but they are not part of rx's public API.
+- The buffer words are collected with dabbrev's private functions, and
+  the searched buffer is re-scanned on every completion request.  On
+  very large buffers this can make typing lag; set
+  =visual-regexp-rx-completion= to =nil= if that happens.
 - =vr/engine= is shared with visual-regexp-steroids; if steroids is loaded
   after this package it redefines the variable and overwrites the choice
   list (=rx= remains usable via =setq=).
