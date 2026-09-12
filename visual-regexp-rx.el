@@ -70,6 +70,11 @@
 (defvar visual-regexp-rx--editing-buffer nil
   "Buffer the rx form is currently edited in, or nil.")
 
+(defvar visual-regexp-rx--edit-window nil
+  "Window the editing buffer is displayed in, or nil.
+It is remembered on its own because the buffer can be killed in the
+middle of a session, and its window would then be left behind.")
+
 (defvar visual-regexp-rx--edit-aborted nil
   "Non-nil once the user abandoned the editing buffer.")
 
@@ -690,6 +695,7 @@ preview.  Return the window used, or nil when there is none."
                  (dedicated . t)))
         window)
     (setq window (display-buffer buffer alist))
+    (setq visual-regexp-rx--edit-window window)
     (when (window-live-p window)
       (select-window window))
     window))
@@ -732,24 +738,28 @@ target buffer."
 
 (defun visual-regexp-rx--edit-buffer-teardown ()
   "Remove the editing buffer, its window and its hooks."
-  (let ((buffer visual-regexp-rx--editing-buffer))
-    (setq visual-regexp-rx--editing-buffer nil)
+  (let ((buffer visual-regexp-rx--editing-buffer)
+        (window visual-regexp-rx--edit-window))
+    (setq visual-regexp-rx--editing-buffer nil
+          visual-regexp-rx--edit-window nil)
     (when (buffer-live-p buffer)
-      (let ((window (get-buffer-window buffer t)))
-        (when (window-live-p window)
-          (delete-window window)))
       (with-current-buffer buffer
         (remove-hook 'after-change-functions
                      #'visual-regexp-rx--edit-after-change t)
         (remove-hook 'before-change-functions
                      #'visual-regexp-rx--clear-pristine t)
         (visual-regexp-rx-edit-mode -1))
-      (kill-buffer buffer))))
+      (kill-buffer buffer))
+    ;; The buffer may have been killed during the session, which can
+    ;; leave its window behind; it is ours, so remove it as well.
+    (when (window-live-p window)
+      (delete-window window))))
 
 (defun visual-regexp-rx--read-in-buffer ()
   "Read the rx form in the editing buffer and return it.
 Signal `quit' when the user aborted it with
-`visual-regexp-rx-edit-abort'."
+`visual-regexp-rx-edit-abort', or when the editing buffer was killed
+in the middle of the session."
   (let ((previous-buffer (current-buffer))
         (previous-window (selected-window))
         ;; The separator of a search/replace pair must not stick to the
@@ -766,10 +776,15 @@ Signal `quit' when the user aborted it with
           ;; there was no window to show it in.
           (set-buffer buffer)
           (recursive-edit)
-          (if visual-regexp-rx--edit-aborted
-              (signal 'quit nil)
-            (with-current-buffer buffer
-              (buffer-string))))
+          (cond
+           ;; The buffer can be killed during the session, since
+           ;; `kill-buffer' offers it as the buffer to kill by default.
+           ;; There is nothing left to read then, so treat it as the
+           ;; abort it is.
+           ((not (buffer-live-p buffer)) (signal 'quit nil))
+           (visual-regexp-rx--edit-aborted (signal 'quit nil))
+           (t (with-current-buffer buffer
+                (buffer-string)))))
       (setq visual-regexp-rx--edit-active nil)
       (visual-regexp-rx--edit-buffer-teardown)
       (when (window-live-p previous-window)

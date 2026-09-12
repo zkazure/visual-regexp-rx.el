@@ -749,6 +749,35 @@ out, since these tests have no target buffer to render into."
       (should-not visual-regexp-rx--edit-active)
       (should-not (get-buffer visual-regexp-rx--edit-buffer-name)))))
 
+(ert-deftest vrx-tests-edit-read-in-buffer-killed-buffer-aborts ()
+  "Killing the editing buffer during a session aborts it.
+`kill-buffer' offers the editing buffer as the buffer to kill by
+default, and once it is gone there is nothing left to read.  Its
+window must not be left behind either."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t)
+        (vr--last-minibuffer-contents "")
+        window)
+    (unwind-protect
+        (cl-letf (((symbol-function 'vr--show-feedback)
+                   (lambda (&rest _) nil))
+                  ((symbol-function 'recursive-edit)
+                   (lambda ()
+                     (setq window visual-regexp-rx--edit-window)
+                     (kill-buffer visual-regexp-rx--editing-buffer))))
+          (let ((quit-signalled nil))
+            (condition-case nil
+                (visual-regexp-rx--read-in-buffer)
+              (quit (setq quit-signalled t)))
+            (should quit-signalled))
+          (should-not visual-regexp-rx--edit-active)
+          (should-not visual-regexp-rx--editing-buffer)
+          (should-not (get-buffer visual-regexp-rx--edit-buffer-name))
+          (should-not (window-live-p window)))
+      (when (window-live-p window) (delete-window window))
+      (visual-regexp-rx--edit-buffer-teardown))))
+
 (ert-deftest vrx-tests-edit-buffer-uses-side-window ()
   "The editing buffer is shown in a bottom side window.
 That is what keeps the target buffer, and with it the live preview,
