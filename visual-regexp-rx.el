@@ -372,7 +372,7 @@ Names that are both a character class and a syntax code, such as
   (mapconcat #'identity (car (rx--translate symbol)) ""))
 
 (defun visual-regexp-rx--definition-string (symbol)
-  "Return the `rx-define' form that defines SYMBOL, as a string."
+  "Return the `rx-define' form of SYMBOL, as a string."
   (let ((definition (get symbol 'rx-definition)))
     (if (cdr definition)
         (format "`%s' is defined with `rx-define'.\n\n(rx-define %s %S %S)"
@@ -601,7 +601,7 @@ visual-regexp's help in it."
             #'visual-regexp-rx--editing-skip-minibuffer-setup)
 
 (defun visual-regexp-rx--editing-skip-after-change (orig beg end len)
-  "Do nothing when another minibuffer changes during a session.
+  "Do nothing when another minibuffer is modified during a session.
 ORIG is `vr--after-change'; BEG, END and LEN are the arguments it
 expects.  ORIG only acts in minibuffers, so left alone it would
 re-render the preview -- from the editing buffer -- while the user
@@ -613,7 +613,7 @@ types into that other minibuffer."
             #'visual-regexp-rx--editing-skip-after-change)
 
 (defun visual-regexp-rx--editing-get-regexp-string-full (orig)
-  "Return the rx form being edited, or what ORIG returns.
+  "Return the rx form being edited, or the value of ORIG.
 ORIG is `vr--get-regexp-string-full'.  While the editing buffer is
 in use, visual-regexp is still in its regexp stage, so ORIG would
 call `minibuffer-contents' outside of a minibuffer."
