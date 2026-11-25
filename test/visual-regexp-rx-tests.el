@@ -38,21 +38,6 @@
   (should (boundp 'vr/engine))
   (should (member '(const rx) (cdr (get 'vr/engine 'custom-type)))))
 
-(ert-deftest vrx-tests-register-engine-preserves-choice ()
-  "`visual-regexp-rx--register-engine' appends `(const rx)' cleanly."
-  (let ((orig (get 'vr/engine 'custom-type)))
-    (unwind-protect
-        (progn
-          (put 'vr/engine 'custom-type '(choice (const emacs) (const python)))
-          (visual-regexp-rx--register-engine)
-          (should (equal (get 'vr/engine 'custom-type)
-                         '(choice (const emacs) (const python) (const rx))))
-          ;; Calling it again is idempotent.
-          (visual-regexp-rx--register-engine)
-          (should (equal (get 'vr/engine 'custom-type)
-                         '(choice (const emacs) (const python) (const rx)))))
-      (put 'vr/engine 'custom-type orig))))
-
 (ert-deftest vrx-tests-advice-installed ()
   "The around advice is installed on `vr--get-regexp-string'."
   (should (advice-member-p #'visual-regexp-rx--get-regexp-string 'vr--get-regexp-string)))
@@ -92,39 +77,6 @@
                               (lambda (&optional _) "(foo)"))
                              :type 'invalid-regexp)))
       (should (string-match-p "foo" (cadr err))))))
-
-(ert-deftest vrx-tests-fill-empty-dotted-pair ()
-  "Dotted pairs such as `(any (?a . ?z))' compile without error."
-  (let ((vr/engine 'rx))
-    (should (equal (visual-regexp-rx--get-regexp-string
-                    (lambda (&optional _) "(any (?a . ?z))"))
-                   (rx-to-string '(any (?a . ?z)))))))
-
-(ert-deftest vrx-tests-trailing-text-and-comments ()
-  "Trailing forms or stray parens fail, while trailing comments succeed."
-  (let ((vr/engine 'rx))
-    (should-error (visual-regexp-rx--get-regexp-string
-                   (lambda (&optional _) "(seq \"a\") (seq \"b\")"))
-                  :type 'invalid-regexp)
-    (should-error (visual-regexp-rx--get-regexp-string
-                   (lambda (&optional _) "(seq \"a\"))"))
-                  :type 'invalid-regexp)
-    (should (equal (visual-regexp-rx--get-regexp-string
-                    (lambda (&optional _) "(seq \"a\") ; comment\n"))
-                   (rx-to-string '(seq "a"))))))
-
-(ert-deftest vrx-tests-eval-form-guarded ()
-  "`(eval ...)' is blocked unless `visual-regexp-rx-allow-eval' is non-nil."
-  (let ((vr/engine 'rx)
-        (visual-regexp-rx-allow-eval nil))
-    (should-error (visual-regexp-rx--get-regexp-string
-                   (lambda (&optional _) "(seq (eval \"abc\"))"))
-                  :type 'invalid-regexp))
-  (let ((vr/engine 'rx)
-        (visual-regexp-rx-allow-eval t))
-    (should (equal (visual-regexp-rx--get-regexp-string
-                    (lambda (&optional _) "(seq (eval \"abc\"))"))
-                   (rx-to-string '(seq (eval "abc")))))))
 
 (ert-deftest vrx-tests-prefill-regexp-minibuffer ()
   "The regexp minibuffer is prefilled with (seq \"\") in rx mode."
@@ -509,115 +461,6 @@
             (should (member "group" (nth 2 (visual-regexp-rx--capf))))))
       (kill-buffer target))))
 
-(ert-deftest vrx-tests-minibuffer-syntax-ppss-ignores-prompt ()
-  "Unbalanced quotes in the minibuffer prompt do not invert rx completion."
-  (let ((vr/engine 'rx)
-        (vr--in-minibuffer 'vr--minibuffer-regexp)
-        (visual-regexp-rx-completion t)
-        (minibuffer (window-buffer (minibuffer-window))))
-    (with-current-buffer minibuffer
-      (let ((inhibit-read-only t))
-        (unwind-protect
-            (progn
-              (erase-buffer)
-              (insert (propertize "Query replace \" -> ': "
-                                  'read-only t 'field t 'front-sticky t))
-              (insert "(seq (gr")
-              (goto-char (point-max))
-              (let ((capf (visual-regexp-rx--capf)))
-                (should capf)
-                (should (member "group" (nth 2 capf)))))
-          (erase-buffer))))))
-
-(ert-deftest vrx-tests-completion-context-filtering ()
-  "List-head, argument, and `intersection' positions filter candidates."
-  (unwind-protect
-      (progn
-        (rx-define vrx-tests-zero-arg (seq "z"))
-        (rx-define vrx-tests-param-arg (x) (seq "z" x))
-        ;; Head of list: forms + parameterized rx-define, not bare symbols.
-        (with-temp-buffer
-          (insert "(seq (")
-          (goto-char (point-max))
-          (let ((candidates (nth 2 (visual-regexp-rx--name-capf))))
-            (should (member "group" candidates))
-            (should (member "vrx-tests-param-arg" candidates))
-            (should-not (member "digit" candidates))
-            (should-not (member "vrx-tests-zero-arg" candidates))))
-        ;; Argument position: symbols + zero-arg rx-define, not forms.
-        (with-temp-buffer
-          (insert "(seq ")
-          (goto-char (point-max))
-          (let ((candidates (nth 2 (visual-regexp-rx--name-capf))))
-            (should (member "digit" candidates))
-            (should (member "vrx-tests-zero-arg" candidates))
-            (should-not (member "group" candidates))
-            (should-not (member "vrx-tests-param-arg" candidates))))
-        ;; `intersection' only offers character classes.
-        (with-temp-buffer
-          (insert "(intersection bl")
-          (goto-char (point-max))
-          (let ((candidates (nth 2 (visual-regexp-rx--name-capf))))
-            (should (member "blank" candidates))
-            (should-not (member "group" candidates))))
-        ;; `any' is labelled "symbol" in arg position and "form" at head.
-        (with-temp-buffer
-          (insert "(seq any")
-          (goto-char (point-max))
-          (visual-regexp-rx--name-capf)
-          (should (equal (visual-regexp-rx--label "any") "symbol")))
-        (with-temp-buffer
-          (insert "(any")
-          (goto-char (point-max))
-          (visual-regexp-rx--name-capf)
-          (should (equal (visual-regexp-rx--label "any") "form"))))
-    (put 'vrx-tests-zero-arg 'rx-definition nil)
-    (put 'vrx-tests-param-arg 'rx-definition nil)))
-
-(ert-deftest vrx-tests-all-builtin-forms-documented ()
-  "Every form in `rx--builtin-forms' has documentation in `--form-docs'."
-  (dolist (form rx--builtin-forms)
-    (should (assoc (symbol-name form) visual-regexp-rx--form-docs))))
-
-(ert-deftest vrx-tests-word-completion-cache-limit-and-syntax ()
-  "Word completion respects size limit, tick cache, and target syntax."
-  (let* ((target (generate-new-buffer " *vrx-word-syntax*"))
-         (vr--target-buffer target)
-         (vr/engine 'rx)
-         (vr--in-minibuffer 'vr--minibuffer-regexp)
-         (visual-regexp-rx-completion t)
-         (visual-regexp-rx--word-cache nil))
-    (unwind-protect
-        (progn
-          (with-current-buffer target
-            (emacs-lisp-mode)
-            (insert "foo-bar-baz foo-qux"))
-          ;; Respects target buffer syntax table and string start boundary.
-          (with-temp-buffer
-            (insert "(seq \"foo-b")
-            (goto-char (point-max))
-            (let ((capf (visual-regexp-rx--capf)))
-              (should capf)
-              (should (= (nth 0 capf) 7))
-              (should (member "foo-bar-baz" (nth 2 capf)))))
-          ;; Cache is populated for target buffer's tick.
-          (should (eq (car visual-regexp-rx--word-cache) target))
-          (let ((cached visual-regexp-rx--word-cache))
-            (should (equal (visual-regexp-rx--collect-buffer-words target)
-                           (cddr cached))))
-          ;; Size limit disables word scanning without disabling rx keywords.
-          (setq visual-regexp-rx--word-cache nil)
-          (let ((visual-regexp-rx-word-completion-max-buffer-size 5))
-            (with-temp-buffer
-              (insert "(seq \"foo")
-              (goto-char (point-max))
-              (should-not (visual-regexp-rx--capf)))
-            (with-temp-buffer
-              (insert "(seq (gr")
-              (goto-char (point-max))
-              (should (member "group" (nth 2 (visual-regexp-rx--capf)))))))
-      (kill-buffer target))))
-
 (ert-deftest vrx-tests-edit-advices-installed ()
   "All five around advices of the editing buffer are installed."
   (should (advice-member-p #'visual-regexp-rx--around-interactive-get-args
@@ -793,7 +636,9 @@ out, since these tests have no target buffer to render into."
 
 (ert-deftest vrx-tests-edit-mode-hook-runs ()
   "Setting up the editing buffer runs `visual-regexp-rx-edit-mode-hook' once.
-Teardown must not invoke the hook a second time."
+That hook runs both when `visual-regexp-rx-edit-buffer-delay-mode-hooks'
+is nil (the default) and when it is non-nil, and teardown must not
+invoke the hook a second time."
   ;; `let*' matters here: an init form is evaluated in the enclosing
   ;; environment, so with a plain `let' the hook would record into some
   ;; other binding of SEEN and the assertion would pass on nothing.
@@ -1061,11 +906,13 @@ visible while the form is edited."
   (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c C-k"))
               #'visual-regexp-rx-edit-abort))
   (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c ?"))
-              #'vr--minibuffer-help))
+              #'visual-regexp-rx-edit-help))
   (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c C-a"))
               #'vr--shortcut-toggle-limit))
   (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c C-p"))
               #'visual-regexp-rx--edit-toggle-preview))
+  (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c C-w"))
+              #'visual-regexp-rx-edit-copy-regexp))
   (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "M-n"))
               #'visual-regexp-rx-edit-history-next))
   (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "M-p"))
@@ -1324,6 +1171,54 @@ while the user types there."
                    (lambda (&rest _) 'change-ran) 1 2 0)
                   'change-ran)))))
 
+(ert-deftest vrx-tests-register-engine-preserves-choice ()
+  "`visual-regexp-rx--register-engine' appends `(const rx)' cleanly."
+  (let ((orig (get 'vr/engine 'custom-type)))
+    (unwind-protect
+        (progn
+          (put 'vr/engine 'custom-type '(choice (const emacs) (const python)))
+          (visual-regexp-rx--register-engine)
+          (should (equal (get 'vr/engine 'custom-type)
+                         '(choice (const emacs) (const python) (const rx))))
+          ;; Calling it again is idempotent.
+          (visual-regexp-rx--register-engine)
+          (should (equal (get 'vr/engine 'custom-type)
+                         '(choice (const emacs) (const python) (const rx)))))
+      (put 'vr/engine 'custom-type orig))))
+
+(ert-deftest vrx-tests-fill-empty-dotted-pair ()
+  "Dotted pairs such as `(any (?a . ?z))' compile without error."
+  (let ((vr/engine 'rx))
+    (should (equal (visual-regexp-rx--get-regexp-string
+                    (lambda (&optional _) "(any (?a . ?z))"))
+                   (rx-to-string '(any (?a . ?z)))))))
+
+(ert-deftest vrx-tests-trailing-text-and-comments ()
+  "Trailing forms or stray parens fail, while trailing comments succeed."
+  (let ((vr/engine 'rx))
+    (should-error (visual-regexp-rx--get-regexp-string
+                   (lambda (&optional _) "(seq \"a\") (seq \"b\")"))
+                  :type 'invalid-regexp)
+    (should-error (visual-regexp-rx--get-regexp-string
+                   (lambda (&optional _) "(seq \"a\"))"))
+                  :type 'invalid-regexp)
+    (should (equal (visual-regexp-rx--get-regexp-string
+                    (lambda (&optional _) "(seq \"a\") ; comment\n"))
+                   (rx-to-string '(seq "a"))))))
+
+(ert-deftest vrx-tests-eval-form-guarded ()
+  "`(eval ...)' is blocked unless `visual-regexp-rx-allow-eval' is non-nil."
+  (let ((vr/engine 'rx)
+        (visual-regexp-rx-allow-eval nil))
+    (should-error (visual-regexp-rx--get-regexp-string
+                   (lambda (&optional _) "(seq (eval \"abc\"))"))
+                  :type 'invalid-regexp))
+  (let ((vr/engine 'rx)
+        (visual-regexp-rx-allow-eval t))
+    (should (equal (visual-regexp-rx--get-regexp-string
+                    (lambda (&optional _) "(seq (eval \"abc\"))"))
+                   (rx-to-string '(seq (eval "abc")))))))
+
 (ert-deftest vrx-tests-edit-after-change-clears-stale-message ()
   "Subsequent edits clear a stale error or help message in the header."
   (let ((vr/engine 'rx)
@@ -1339,6 +1234,110 @@ while the user types there."
           (with-current-buffer buffer
             (insert "a"))
           (should-not visual-regexp-rx--edit-message))))))
+
+(ert-deftest vrx-tests-minibuffer-syntax-ppss-ignores-prompt ()
+  "Unbalanced quotes in the minibuffer prompt do not invert rx completion."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-completion t)
+        (minibuffer (window-buffer (minibuffer-window))))
+    (with-current-buffer minibuffer
+      (let ((inhibit-read-only t))
+        (unwind-protect
+            (progn
+              (erase-buffer)
+              (insert (propertize "Query replace \" -> ': "
+                                  'read-only t 'field t 'front-sticky t))
+              (insert "(seq (gr")
+              (goto-char (point-max))
+              (let ((capf (visual-regexp-rx--capf)))
+                (should capf)
+                (should (member "group" (nth 2 capf)))))
+          (erase-buffer))))))
+
+(ert-deftest vrx-tests-completion-context-filtering ()
+  "List-head, argument, and `intersection' positions filter candidates."
+  (unwind-protect
+      (progn
+        (rx-define vrx-tests-zero-arg (seq "z"))
+        (rx-define vrx-tests-param-arg (x) (seq "z" x))
+        ;; Head of list: forms + parameterized rx-define, not bare symbols.
+        (with-temp-buffer
+          (insert "(seq (")
+          (goto-char (point-max))
+          (let ((candidates (nth 2 (visual-regexp-rx--name-capf))))
+            (should (member "group" candidates))
+            (should (member "vrx-tests-param-arg" candidates))
+            (should-not (member "digit" candidates))
+            (should-not (member "vrx-tests-zero-arg" candidates))))
+        ;; Argument position: symbols + zero-arg rx-define, not forms.
+        (with-temp-buffer
+          (insert "(seq ")
+          (goto-char (point-max))
+          (let ((candidates (nth 2 (visual-regexp-rx--name-capf))))
+            (should (member "digit" candidates))
+            (should (member "vrx-tests-zero-arg" candidates))
+            (should-not (member "group" candidates))
+            (should-not (member "vrx-tests-param-arg" candidates))))
+        ;; `intersection' only offers character classes.
+        (with-temp-buffer
+          (insert "(intersection bl")
+          (goto-char (point-max))
+          (let ((candidates (nth 2 (visual-regexp-rx--name-capf))))
+            (should (member "blank" candidates))
+            (should-not (member "group" candidates))))
+        ;; `any' is labelled "symbol" in arg position and "form" at head.
+        (with-temp-buffer
+          (insert "(seq any")
+          (goto-char (point-max))
+          (visual-regexp-rx--name-capf)
+          (should (equal (visual-regexp-rx--label "any") "symbol")))
+        (with-temp-buffer
+          (insert "(any")
+          (goto-char (point-max))
+          (visual-regexp-rx--name-capf)
+          (should (equal (visual-regexp-rx--label "any") "form"))))
+    (put 'vrx-tests-zero-arg 'rx-definition nil)
+    (put 'vrx-tests-param-arg 'rx-definition nil)))
+
+(ert-deftest vrx-tests-word-completion-cache-limit-and-syntax ()
+  "Word completion respects size limit, tick cache, and target syntax."
+  (let* ((target (generate-new-buffer " *vrx-word-syntax*"))
+         (vr--target-buffer target)
+         (vr/engine 'rx)
+         (vr--in-minibuffer 'vr--minibuffer-regexp)
+         (visual-regexp-rx-completion t)
+         (visual-regexp-rx--word-cache nil))
+    (unwind-protect
+        (progn
+          (with-current-buffer target
+            (emacs-lisp-mode)
+            (insert "foo-bar-baz foo-qux"))
+          ;; Respects target buffer syntax table and string start boundary.
+          (with-temp-buffer
+            (insert "(seq \"foo-b")
+            (goto-char (point-max))
+            (let ((capf (visual-regexp-rx--capf)))
+              (should capf)
+              (should (= (nth 0 capf) 7))
+              (should (member "foo-bar-baz" (nth 2 capf)))))
+          ;; Cache is populated for target buffer's tick.
+          (should (eq (car visual-regexp-rx--word-cache) target))
+          (let ((cached visual-regexp-rx--word-cache))
+            (should (equal (visual-regexp-rx--collect-buffer-words target)
+                           (cddr cached))))
+          ;; Size limit disables word scanning without disabling rx keywords.
+          (setq visual-regexp-rx--word-cache nil)
+          (let ((visual-regexp-rx-word-completion-max-buffer-size 5))
+            (with-temp-buffer
+              (insert "(seq \"foo")
+              (goto-char (point-max))
+              (should-not (visual-regexp-rx--capf)))
+            (with-temp-buffer
+              (insert "(seq (gr")
+              (goto-char (point-max))
+              (should (member "group" (nth 2 (visual-regexp-rx--capf)))))))
+      (kill-buffer target))))
 
 (ert-deftest vrx-tests-edit-history-multiline-pair-no-escape-glyph ()
   "Multi-line search forms in history pairs retain real newlines."
@@ -1414,6 +1413,105 @@ while the user types there."
         (with-current-buffer target (set-buffer-modified-p nil))
         (kill-buffer target))
       (visual-regexp-rx--edit-buffer-teardown))))
+
+(ert-deftest vrx-tests-edit-eldoc-and-font-lock ()
+  "Eldoc and font-lock keywords are wired into `visual-regexp-rx-edit-mode'."
+  (with-temp-buffer
+    (lisp-data-mode)
+    (visual-regexp-rx-edit-mode 1)
+    (should (memq #'visual-regexp-rx--eldoc-function
+                  eldoc-documentation-functions))
+    (insert "(seq \"a\" (+ digit))")
+    (goto-char 2)                       ; on `seq'
+    (let (reported)
+      (visual-regexp-rx--eldoc-function
+       (lambda (doc &rest _) (setq reported doc)))
+      (should (stringp reported))
+      (should (string-match-p "seq" reported)))
+    (goto-char 12)                      ; on `+'
+    (let (reported)
+      (visual-regexp-rx--eldoc-function
+       (lambda (doc &rest _) (setq reported doc)))
+      (should (stringp reported))
+      (should (string-match-p "one or more" reported)))
+    (visual-regexp-rx-edit-mode -1)
+    (should-not (memq #'visual-regexp-rx--eldoc-function
+                      eldoc-documentation-functions))))
+
+(ert-deftest vrx-tests-edit-copy-regexp-and-help ()
+  "Copy-regexp compiles into `kill-ring' and help formats editing keys."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (vr--calling-func 'vr--calling-func-query-replace)
+        (visual-regexp-rx-use-editing-buffer t)
+        (kill-ring nil))
+    (vrx-tests--with-editing-buffer
+      (cl-letf (((symbol-function 'vr--show-feedback) (lambda (&rest _) nil)))
+        (let ((buffer (visual-regexp-rx--edit-buffer-setup))
+              (visual-regexp-rx--edit-active t))
+          (with-current-buffer buffer
+            (erase-buffer)
+            (insert "(seq \"a\" (+ digit))")
+            (visual-regexp-rx-edit-copy-regexp)
+            (should (equal (car kill-ring)
+                           (rx-to-string '(seq "a" (+ digit)))))
+            (should (string-match-p "Copied regexp:"
+                                    visual-regexp-rx--edit-message))
+            (visual-regexp-rx-edit-help)
+            (should (string-match-p "C-c C-c"
+                                    visual-regexp-rx--edit-message))))))))
+
+(ert-deftest vrx-tests-convenience-commands ()
+  "Convenience commands toggle `vr/engine' and invoke `vr/query-replace' in rx."
+  (let ((vr/engine 'emacs)
+        (seen-engine nil))
+    (visual-regexp-rx-toggle-engine)
+    (should (eq vr/engine 'rx))
+    (visual-regexp-rx-toggle-engine)
+    (should (eq vr/engine 'emacs))
+    (cl-letf (((symbol-function 'vr/query-replace)
+               (lambda (&rest _)
+                 (interactive)
+                 (setq seen-engine vr/engine))))
+      (visual-regexp-rx-query-replace)
+      (should (eq seen-engine 'rx))
+      (should (eq vr/engine 'emacs)))))
+
+(ert-deftest vrx-tests-all-builtin-forms-documented ()
+  "Every form in `rx--builtin-forms' has documentation in `--form-docs'."
+  (dolist (form rx--builtin-forms)
+    (should (assoc (symbol-name form) visual-regexp-rx--form-docs))))
+
+(ert-deftest vrx-tests-unload-function ()
+  "`visual-regexp-rx-unload-function' removes advices, hooks, and keys."
+  (unwind-protect
+      (progn
+        (should-not (visual-regexp-rx-unload-function))
+        (should-not (advice-member-p #'visual-regexp-rx--get-regexp-string
+                                     'vr--get-regexp-string))
+        (should-not (advice-member-p #'visual-regexp-rx--around-interactive-get-args
+                                     'vr--interactive-get-args))
+        (should-not (memq #'visual-regexp-rx--minibuffer-setup
+                          minibuffer-setup-hook))
+        (should-not (memq #'visual-regexp-rx--after-load
+                          after-load-functions))
+        (should-not (lookup-key vr/minibuffer-keymap (kbd "C-c C-e"))))
+    (advice-add 'vr--get-regexp-string :around
+                #'visual-regexp-rx--get-regexp-string)
+    (advice-add 'vr--minibuffer-message :around
+                #'visual-regexp-rx--editing-minibuffer-message)
+    (advice-add 'vr--minibuffer-setup :around
+                #'visual-regexp-rx--editing-skip-minibuffer-setup)
+    (advice-add 'vr--after-change :around
+                #'visual-regexp-rx--editing-skip-after-change)
+    (advice-add 'vr--get-regexp-string-full :around
+                #'visual-regexp-rx--editing-get-regexp-string-full)
+    (advice-add 'vr--interactive-get-args :around
+                #'visual-regexp-rx--around-interactive-get-args)
+    (add-hook 'minibuffer-setup-hook #'visual-regexp-rx--minibuffer-setup)
+    (add-hook 'after-load-functions #'visual-regexp-rx--after-load)
+    (define-key vr/minibuffer-keymap (kbd "C-c C-e")
+      #'visual-regexp-rx-pop-to-editing-buffer)))
 
 (provide 'visual-regexp-rx-tests)
 ;;; visual-regexp-rx-tests.el ends here

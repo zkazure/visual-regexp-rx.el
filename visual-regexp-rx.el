@@ -53,6 +53,8 @@
 (defvar vr/engine)
 ;; Stage flag set by visual-regexp while the minibuffer is open.
 (defvar vr--in-minibuffer)
+;; Declared here for byte-compiler cleanliness across Emacs 28.1+.
+(defvar eldoc-documentation-functions)
 ;; Non-nil while the rx regexp minibuffer still holds the unedited
 ;; prefill; cleared by the first edit.
 (defvar visual-regexp-rx--pristine nil)
@@ -822,18 +824,95 @@ call `minibuffer-contents' outside of a minibuffer."
   (vr--shortcut-toggle-preview)
   (visual-regexp-rx--update-header))
 
+(defun visual-regexp-rx-edit-copy-regexp ()
+  "Compile the edited rx form and save the regexp to the kill ring."
+  (interactive)
+  (let* ((buf (or (and (buffer-live-p visual-regexp-rx--editing-buffer)
+                       visual-regexp-rx--editing-buffer)
+                  (current-buffer)))
+         (raw (with-current-buffer buf
+                (buffer-substring-no-properties (point-min) (point-max))))
+         (split (vr--query-replace--split-string raw))
+         (rx-str (if (consp split) (car split) split)))
+    (condition-case err
+        (let ((compiled (visual-regexp-rx--compile rx-str)))
+          (kill-new compiled)
+          (vr--minibuffer-message "Copied regexp: %s" compiled))
+      (error
+       (vr--minibuffer-message "%s" (error-message-string err))))))
+
+(defun visual-regexp-rx-edit-help ()
+  "Show the editing buffer keybindings."
+  (interactive)
+  (vr--minibuffer-message
+   "%s"
+   (substitute-command-keys
+    (concat "\\<visual-regexp-rx-edit-mode-map>"
+            "\\[visual-regexp-rx-edit-finish]: finish, "
+            "\\[visual-regexp-rx-edit-abort]: abort, "
+            "\\[visual-regexp-rx-edit-copy-regexp]: copy regexp, "
+            "\\[vr--shortcut-toggle-limit]: toggle show all, "
+            "\\[visual-regexp-rx-edit-history-prev]: previous"
+            (when (vr--in-replace)
+              ", \\[visual-regexp-rx--edit-toggle-preview]: toggle preview")))))
+
 (defvar visual-regexp-rx-edit-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'visual-regexp-rx-edit-finish)
     (define-key map (kbd "C-c C-k") #'visual-regexp-rx-edit-abort)
-    (define-key map (kbd "C-c ?") #'vr--minibuffer-help)
+    (define-key map (kbd "C-c ?") #'visual-regexp-rx-edit-help)
     (define-key map (kbd "C-c C-a") #'vr--shortcut-toggle-limit)
     (define-key map (kbd "C-c C-p") #'visual-regexp-rx--edit-toggle-preview)
+    (define-key map (kbd "C-c C-w") #'visual-regexp-rx-edit-copy-regexp)
     (define-key map (kbd "M-n") #'visual-regexp-rx-edit-history-next)
     (define-key map (kbd "M-p") #'visual-regexp-rx-edit-history-prev)
     map)
   "Keymap of `visual-regexp-rx-edit-mode'.")
 
+(defconst visual-regexp-rx--font-lock-keywords
+  (let* ((group-forms '(group submatch group-n submatch-n))
+         (other-forms (cl-remove-if
+                       (lambda (sym) (memq sym group-forms))
+                       rx--builtin-forms)))
+    `((,(concat "(" (regexp-opt (mapcar #'symbol-name group-forms) t)
+                "\\(?:\\_>\\|\\s-\\|$\\)")
+       (1 font-lock-function-name-face))
+      (,(concat "(" (regexp-opt (mapcar #'symbol-name other-forms) t)
+                "\\(?:\\_>\\|\\s-\\|$\\)")
+       (1 font-lock-keyword-face))
+      (,(regexp-opt (mapcar #'symbol-name rx--builtin-symbols) 'symbols)
+       (0 font-lock-builtin-face))))
+  "Font-lock keywords highlighting rx forms and symbols.")
+
+(defun visual-regexp-rx--eldoc-function (callback &rest _)
+  "Report rx documentation for the symbol or enclosing form at point.
+CALLBACK receives the single-line summary string."
+  (let* ((sym (thing-at-point 'symbol t))
+         (context (visual-regexp-rx--context))
+         (sym-known (and sym
+                         (let ((interned (intern-soft sym)))
+                           (or (assoc sym visual-regexp-rx--form-docs)
+                               (and interned
+                                    (or (assq interned rx--char-classes)
+                                        (assq interned rx--syntax-codes)
+                                        (assq interned rx--categories)
+                                        (memq interned rx--builtin-symbols)
+                                        (get interned 'rx-definition)))))))
+         (name (cond
+                (sym-known sym)
+                ((cdr context) (symbol-name (cdr context))))))
+    (when name
+      (let ((visual-regexp-rx--completion-head-p
+             (if (and sym (string= name sym)) (car context) t))
+            (visual-regexp-rx--completion-operator (cdr context)))
+        (let ((doc (visual-regexp-rx--doc-string name)))
+          (when doc
+            (funcall callback
+                     (replace-regexp-in-string "\n+" " — " doc)
+                     :thing name
+                     :face 'font-lock-keyword-face)))))))
+
+;;;###autoload
 (define-minor-mode visual-regexp-rx-edit-mode
   "Minor mode of the buffer used to edit the rx form.
 It provides the keys the minibuffer provides for visual-regexp,
@@ -843,14 +922,25 @@ the form can span several lines.
 \\<visual-regexp-rx-edit-mode-map>\\
 \\[visual-regexp-rx-edit-finish] finishes the input.
 \\[visual-regexp-rx-edit-abort] aborts the whole command.
-\\[vr--minibuffer-help] shows help.
+\\[visual-regexp-rx-edit-help] shows help.
+\\[visual-regexp-rx-edit-copy-regexp] copies the compiled regexp.
 \\[vr--shortcut-toggle-limit] and
 \\[visual-regexp-rx--edit-toggle-preview] are the minibuffer
 shortcuts, and \\[visual-regexp-rx-edit-history-prev] and
 \\[visual-regexp-rx-edit-history-next] cycle earlier inputs."
   :lighter " VR-rx"
   :keymap visual-regexp-rx-edit-mode-map
-  :group 'visual-regexp)
+  :group 'visual-regexp
+  (if visual-regexp-rx-edit-mode
+      (progn
+        (add-hook 'eldoc-documentation-functions
+                  #'visual-regexp-rx--eldoc-function nil t)
+        (font-lock-add-keywords nil visual-regexp-rx--font-lock-keywords))
+    (remove-hook 'eldoc-documentation-functions
+                 #'visual-regexp-rx--eldoc-function t)
+    (font-lock-remove-keywords nil visual-regexp-rx--font-lock-keywords))
+  (when (bound-and-true-p font-lock-mode)
+    (font-lock-flush)))
 
 (defun visual-regexp-rx--create-message-overlay ()
   "Give `vr--minibuffer-message-overlay' an overlay the cleanup can delete.
@@ -1084,6 +1174,36 @@ minibuffer work without affecting other callers."
 (advice-add 'vr--interactive-get-args :around
             #'visual-regexp-rx--around-interactive-get-args)
 
+;;; Convenience commands
+
+;;;###autoload
+(defun visual-regexp-rx-toggle-engine ()
+  "Toggle `vr/engine' between `rx' and `emacs'."
+  (interactive)
+  (setq vr/engine (if (eq vr/engine 'rx) 'emacs 'rx))
+  (message "visual-regexp engine: %s" vr/engine))
+
+;;;###autoload
+(defun visual-regexp-rx-query-replace ()
+  "Run `vr/query-replace' using the rx engine."
+  (interactive)
+  (let ((vr/engine 'rx))
+    (call-interactively #'vr/query-replace)))
+
+;;;###autoload
+(defun visual-regexp-rx-replace ()
+  "Run `vr/replace' using the rx engine."
+  (interactive)
+  (let ((vr/engine 'rx))
+    (call-interactively #'vr/replace)))
+
+;;;###autoload
+(defun visual-regexp-rx-mc-mark ()
+  "Run `vr/mc-mark' using the rx engine."
+  (interactive)
+  (let ((vr/engine 'rx))
+    (call-interactively #'vr/mc-mark)))
+
 ;;; Input history
 
 (defun visual-regexp-rx--edit-history-elements ()
@@ -1228,6 +1348,21 @@ not its prompt."
       (visual-regexp-rx--clear-pristine))))
 
 (add-hook 'minibuffer-setup-hook #'visual-regexp-rx--minibuffer-setup)
+
+(defun visual-regexp-rx-unload-function ()
+  "Uninstall advices, hooks, and keybindings installed by `visual-regexp-rx'."
+  (dolist (pair '((vr--get-regexp-string . visual-regexp-rx--get-regexp-string)
+                  (vr--minibuffer-message . visual-regexp-rx--editing-minibuffer-message)
+                  (vr--minibuffer-setup . visual-regexp-rx--editing-skip-minibuffer-setup)
+                  (vr--after-change . visual-regexp-rx--editing-skip-after-change)
+                  (vr--get-regexp-string-full . visual-regexp-rx--editing-get-regexp-string-full)
+                  (vr--interactive-get-args . visual-regexp-rx--around-interactive-get-args)))
+    (advice-remove (car pair) (cdr pair)))
+  (remove-hook 'minibuffer-setup-hook #'visual-regexp-rx--minibuffer-setup)
+  (remove-hook 'after-load-functions #'visual-regexp-rx--after-load)
+  (when (boundp 'vr/minibuffer-keymap)
+    (define-key vr/minibuffer-keymap (kbd "C-c C-e") nil))
+  nil)
 
 (provide 'visual-regexp-rx)
 ;;; visual-regexp-rx.el ends here
