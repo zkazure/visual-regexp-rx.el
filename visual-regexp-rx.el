@@ -85,6 +85,12 @@ middle of a session, and its window would then be left behind.")
 (defvar visual-regexp-rx--edit-message nil
   "Last message visual-regexp produced while editing in a buffer.")
 
+(defvar visual-regexp-rx--keep-buffer-for-replace nil
+  "Non-nil while the editing buffer may stay visible during replace.")
+
+(defvar visual-regexp-rx--popout-initial nil
+  "Cons (TEXT . REL-POINT) saved when popping out of the minibuffer.")
+
 (defvar-local visual-regexp-rx--edit-history-index nil
   "Position in the input history while cycling it, or nil.")
 
@@ -229,6 +235,25 @@ scanned inside rx string literals, while rx keyword completion
 remains active.  Set to nil to scan buffers of any size."
   :type '(choice (integer :tag "Max characters")
                  (const :tag "No limit" nil))
+  :group 'visual-regexp)
+
+(defcustom visual-regexp-rx-keep-editing-buffer-for-replace t
+  "Whether to keep the editing buffer visible during replacement input.
+When non-nil, finishing the rx form in `vr/query-replace' or
+`vr/replace' leaves the editing buffer open and read-only while
+you type the replacement, so capture groups remain easy to read.
+The buffer and window are closed once the replacement prompt ends."
+  :type 'boolean
+  :group 'visual-regexp)
+
+(defcustom visual-regexp-rx-edit-buffer-delay-mode-hooks nil
+  "Whether to suppress major-mode hooks in the rx editing buffer.
+When nil (the default), `visual-regexp-rx-edit-buffer-mode' runs
+its normal hooks so globalized minor modes such as
+`global-corfu-mode' or `evil-mode' activate automatically.  Set
+to non-nil to delay mode hooks (via symbol `delay-mode-hooks')
+and keep mode hooks out of the transient buffer."
+  :type 'boolean
   :group 'visual-regexp)
 
 ;;; Compile rx input
@@ -854,11 +879,12 @@ preview.  Return the window used, or nil when there is none."
       (select-window window))
     window))
 
-(defun visual-regexp-rx--edit-buffer-setup ()
+(defun visual-regexp-rx--edit-buffer-setup (&optional initial-text initial-point)
   "Prepare and return the buffer used to edit the rx form.
 The buffer is put in `visual-regexp-rx-edit-buffer-mode', prefilled
-with `visual-regexp-rx-prefill-form', and wired to update the live
-preview on every change and to offer completion.
+with `visual-regexp-rx-prefill-form' (or INITIAL-TEXT with point at
+INITIAL-POINT when popping out of the minibuffer), and wired to update
+the live preview on every change and to offer completion.
 
 The session state is set before the prefill is inserted, so that
 inserting it renders the preview once, just as visual-regexp does
@@ -871,12 +897,14 @@ target buffer."
           visual-regexp-rx--edit-message nil
           visual-regexp-rx--edit-active t)
     (with-current-buffer buffer
-      (erase-buffer)
-      ;; `delay-mode-hooks' keeps the mode hooks of the user's config
-      ;; out of this transient buffer, and its `make-local-variable'
-      ;; call is also what keeps Emacs from warning about a let-bound
-      ;; `delay-mode-hooks' (see `kill-all-local-variables').
-      (delay-mode-hooks
+      (let ((inhibit-read-only t))
+        (erase-buffer))
+      (setq buffer-read-only nil)
+      ;; Wrap in `delay-mode-hooks' only when configured to keep user
+      ;; mode hooks out; by default globalized modes activate normally.
+      (if visual-regexp-rx-edit-buffer-delay-mode-hooks
+          (delay-mode-hooks
+            (funcall visual-regexp-rx-edit-buffer-mode))
         (funcall visual-regexp-rx-edit-buffer-mode))
       ;; Indent after RET even when the global mode is turned off.
       (electric-indent-local-mode 1)
@@ -885,7 +913,20 @@ target buffer."
                 nil t)
       (visual-regexp-rx--setup-completion)
       (visual-regexp-rx--create-message-overlay)
-      (visual-regexp-rx--prefill)
+      (if initial-text
+          (progn
+            (unless (and visual-regexp-rx--pristine
+                         (string= initial-text visual-regexp-rx-prefill-form))
+              (visual-regexp-rx--clear-pristine))
+            (insert initial-text)
+            (goto-char (+ (point-min)
+                          (max 0 (min (length initial-text)
+                                      (or initial-point
+                                          (length initial-text))))))
+            (when visual-regexp-rx--pristine
+              (add-hook 'before-change-functions
+                        #'visual-regexp-rx--clear-pristine nil t)))
+        (visual-regexp-rx--prefill))
       ;; Show the prompt even when the prefill rendered nothing.
       (visual-regexp-rx--update-header))
     buffer))
@@ -914,8 +955,25 @@ target buffer."
     (when (window-live-p window)
       (delete-window window))))
 
-(defun visual-regexp-rx--read-in-buffer ()
+(defun visual-regexp-rx--freeze-for-replace (buffer)
+  "Keep BUFFER open and read-only while answering the replacement prompt."
+  (setq visual-regexp-rx--edit-active nil
+        visual-regexp-rx--pristine nil)
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (remove-hook 'after-change-functions
+                   #'visual-regexp-rx--edit-after-change t)
+      (remove-hook 'before-change-functions
+                   #'visual-regexp-rx--clear-pristine t)
+      (setq buffer-read-only t
+            header-line-format
+            (propertize "rx form (read-only reference)"
+                        'face 'minibuffer-prompt)))))
+
+(defun visual-regexp-rx--read-in-buffer (&optional initial-text initial-point)
   "Read the rx form in the editing buffer and return it.
+INITIAL-TEXT and INITIAL-POINT, when non-nil, pre-populate the
+editing buffer instead of `visual-regexp-rx-prefill-form'.
 Signal `quit' when the user aborted it with
 `visual-regexp-rx-edit-abort', or when the editing buffer was killed
 in the middle of the session."
@@ -926,10 +984,12 @@ in the middle of the session."
         ;; minibuffer read.
         (text-property-default-nonsticky
          (cons '(separator . t) text-property-default-nonsticky))
+        (kept nil)
         buffer)
     (unwind-protect
         (progn
-          (setq buffer (visual-regexp-rx--edit-buffer-setup))
+          (setq buffer (visual-regexp-rx--edit-buffer-setup
+                        initial-text initial-point))
           (visual-regexp-rx--edit-buffer-display buffer)
           ;; The input must happen in the editing buffer even when
           ;; there was no window to show it in.
@@ -942,13 +1002,34 @@ in the middle of the session."
            ;; abort it is.
            ((not (buffer-live-p buffer)) (signal 'quit nil))
            (visual-regexp-rx--edit-aborted (signal 'quit nil))
-           (t (with-current-buffer buffer
-                (buffer-string)))))
-      (visual-regexp-rx--edit-buffer-teardown)
+           (t
+            (let ((result (with-current-buffer buffer (buffer-string))))
+              (when (and visual-regexp-rx--keep-buffer-for-replace
+                         (not (consp (vr--query-replace--split-string result))))
+                (visual-regexp-rx--freeze-for-replace buffer)
+                (setq kept t))
+              result))))
+      (unless kept
+        (visual-regexp-rx--edit-buffer-teardown))
       (when (window-live-p previous-window)
         (select-window previous-window))
       (when (buffer-live-p previous-buffer)
         (set-buffer previous-buffer)))))
+
+(defun visual-regexp-rx-pop-to-editing-buffer ()
+  "Move the current rx minibuffer input into the dedicated editing buffer."
+  (interactive)
+  (unless (and (eq vr/engine 'rx)
+               (eq vr--in-minibuffer 'vr--minibuffer-regexp)
+               (minibufferp))
+    (user-error "Not editing an rx regexp in the minibuffer"))
+  (setq visual-regexp-rx--popout-initial
+        (cons (minibuffer-contents)
+              (- (point) (minibuffer-prompt-end))))
+  (exit-minibuffer))
+
+(define-key vr/minibuffer-keymap (kbd "C-c C-e")
+  #'visual-regexp-rx-pop-to-editing-buffer)
 
 (defun visual-regexp-rx--read-input (real-read args)
   "Read one input for visual-regexp.
@@ -969,23 +1050,36 @@ second editing session, whose setup erases the form being edited."
            ;; regexp one then, so it cannot rule this out on its own.
            (not visual-regexp-rx--edit-active))
       (visual-regexp-rx--read-in-buffer)
-    (apply real-read args)))
+    (let ((result (apply real-read args)))
+      (if (and visual-regexp-rx--popout-initial
+               (eq vr/engine 'rx)
+               (eq vr--in-minibuffer 'vr--minibuffer-regexp)
+               (not visual-regexp-rx--edit-active))
+          (let ((popout visual-regexp-rx--popout-initial))
+            (setq visual-regexp-rx--popout-initial nil)
+            (visual-regexp-rx--read-in-buffer (car popout) (cdr popout)))
+        result))))
 
 (defun visual-regexp-rx--around-interactive-get-args (orig &rest args)
   "Read the rx form in a buffer when the editing buffer is enabled.
-ORIG is `vr--interactive-get-args' and ARGS are its arguments;
-the editing buffer is used when
-`visual-regexp-rx-use-editing-buffer' is non-nil and the rx engine
-is selected.  `read-from-minibuffer' is shadowed for the dynamic
-extent of the call only, so no other caller of it is affected."
-  (if (not (and visual-regexp-rx-use-editing-buffer
-                (eq vr/engine 'rx)))
+ORIG is `vr--interactive-get-args' and ARGS are its arguments.
+`read-from-minibuffer' is shadowed for the dynamic extent of the
+call only when `vr/engine' is `rx', so both
+`visual-regexp-rx-use-editing-buffer' and pop-out from the
+minibuffer work without affecting other callers."
+  (if (not (eq vr/engine 'rx))
       (apply orig args)
-    (let ((real-read (symbol-function 'read-from-minibuffer)))
-      (cl-letf (((symbol-function 'read-from-minibuffer)
-                 (lambda (&rest rargs)
-                   (visual-regexp-rx--read-input real-read rargs))))
-        (apply orig args)))))
+    (let ((real-read (symbol-function 'read-from-minibuffer))
+          (visual-regexp-rx--keep-buffer-for-replace
+           (and visual-regexp-rx-keep-editing-buffer-for-replace
+                (eq (car args) 'vr--mode-regexp-replace)))
+          (visual-regexp-rx--popout-initial nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'read-from-minibuffer)
+                     (lambda (&rest rargs)
+                       (visual-regexp-rx--read-input real-read rargs))))
+            (apply orig args))
+        (visual-regexp-rx--edit-buffer-teardown)))))
 
 (advice-add 'vr--interactive-get-args :around
             #'visual-regexp-rx--around-interactive-get-args)

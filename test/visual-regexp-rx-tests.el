@@ -638,11 +638,15 @@
   (should (equal visual-regexp-rx-edit-buffer-height 0.35))
   (should-not visual-regexp-rx-allow-eval)
   (should (equal visual-regexp-rx-word-completion-max-buffer-size 500000))
+  (should (eq visual-regexp-rx-keep-editing-buffer-for-replace t))
+  (should-not visual-regexp-rx-edit-buffer-delay-mode-hooks)
   (dolist (var '(visual-regexp-rx-use-editing-buffer
                  visual-regexp-rx-edit-buffer-mode
                  visual-regexp-rx-edit-buffer-height
                  visual-regexp-rx-allow-eval
-                 visual-regexp-rx-word-completion-max-buffer-size))
+                 visual-regexp-rx-word-completion-max-buffer-size
+                 visual-regexp-rx-keep-editing-buffer-for-replace
+                 visual-regexp-rx-edit-buffer-delay-mode-hooks))
     (should (member (list var 'custom-variable)
                     (get 'visual-regexp 'custom-group)))))
 
@@ -1066,6 +1070,8 @@ visible while the form is edited."
               #'visual-regexp-rx-edit-history-next))
   (should (eq (lookup-key visual-regexp-rx-edit-mode-map (kbd "M-p"))
               #'visual-regexp-rx-edit-history-prev))
+  (should (eq (lookup-key vr/minibuffer-keymap (kbd "C-c C-e"))
+              #'visual-regexp-rx-pop-to-editing-buffer))
   ;; `C-c <letter>' is reserved for the user, so it must stay free.
   (should-not (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c a")))
   (should-not (lookup-key visual-regexp-rx-edit-mode-map (kbd "C-c p")))
@@ -1345,6 +1351,69 @@ while the user types there."
            (nl-pos (string-match "\n" pair)))
       (should nl-pos)
       (should-not (get-text-property nl-pos 'display pair)))))
+
+(ert-deftest vrx-tests-edit-popout-from-minibuffer ()
+  "Popping out from the minibuffer hands text and point to the buffer."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer nil)
+        (visual-regexp-rx--popout-initial nil)
+        (captured nil))
+    (cl-letf (((symbol-function 'visual-regexp-rx--read-in-buffer)
+               (lambda (&optional initial-text initial-point)
+                 (setq captured (list initial-text initial-point))
+                 "(seq \"from-mini\" \"more\")")))
+      (let ((res (visual-regexp-rx--read-input
+                  (lambda (&rest _)
+                    (setq visual-regexp-rx--popout-initial
+                          (cons "(seq \"from-mini\")" 16))
+                    "(seq \"from-mini\")")
+                  nil)))
+        (should (equal captured '("(seq \"from-mini\")" 16)))
+        (should (equal res "(seq \"from-mini\" \"more\")"))
+        (should-not visual-regexp-rx--popout-initial)))))
+
+(ert-deftest vrx-tests-edit-keep-buffer-read-only-for-replace ()
+  "Editing buffer stays visible and read-only during replacement prompt."
+  (let ((vr/engine 'rx)
+        (visual-regexp-rx-use-editing-buffer t)
+        (visual-regexp-rx-keep-editing-buffer-for-replace t)
+        (vr--in-minibuffer nil)
+        (vr--calling-func nil)
+        (target (generate-new-buffer "*vrx-keep-target*"))
+        (replace-saw-readonly nil)
+        (replace-saw-edit-active 'unset)
+        (replace-saw-text nil))
+    (unwind-protect
+        (progn
+          (with-current-buffer target
+            (insert "hello 123")
+            (goto-char (point-min)))
+          (switch-to-buffer target)
+          (cl-letf (((symbol-function 'recursive-edit)
+                     (lambda ()
+                       (erase-buffer)
+                       (insert "(seq \"hello\" (group (+ digit)))")))
+                    ((symbol-function 'read-from-minibuffer)
+                     (lambda (&rest _)
+                       (let ((buf (get-buffer visual-regexp-rx--edit-buffer-name)))
+                         (setq replace-saw-edit-active visual-regexp-rx--edit-active)
+                         (when (buffer-live-p buf)
+                           (setq replace-saw-readonly
+                                 (buffer-local-value 'buffer-read-only buf)
+                                 replace-saw-text
+                                 (with-current-buffer buf (buffer-string)))))
+                       "hi \\1")))
+            (vr--interactive-get-args 'vr--mode-regexp-replace
+                                      'vr--calling-func-query-replace))
+          (should replace-saw-readonly)
+          (should-not replace-saw-edit-active)
+          (should (equal replace-saw-text "(seq \"hello\" (group (+ digit)))"))
+          (should-not (get-buffer visual-regexp-rx--edit-buffer-name)))
+      (when (buffer-live-p target)
+        (with-current-buffer target (set-buffer-modified-p nil))
+        (kill-buffer target))
+      (visual-regexp-rx--edit-buffer-teardown))))
 
 (provide 'visual-regexp-rx-tests)
 ;;; visual-regexp-rx-tests.el ends here
