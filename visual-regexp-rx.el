@@ -61,6 +61,9 @@
 ;; It tells ambiguous names such as `whitespace' -- both a character
 ;; class and a syntax code -- which of the two is meant here.
 (defvar visual-regexp-rx--completion-operator nil)
+;; Completion position flag: t at the head of a list, `top' outside
+;; any list, nil in an argument position.
+(defvar visual-regexp-rx--completion-head-p nil)
 
 ;;; Edit-the-buffer state
 
@@ -363,56 +366,79 @@ zero-width highlights."
   "Return the names of SYMBOLS, sorted and without duplicates."
   (sort (delete-dups (mapcar #'symbol-name symbols)) #'string-lessp))
 
+(defun visual-regexp-rx--syntax-ppss ()
+  "Return `syntax-ppss' at point, ignoring any minibuffer prompt."
+  (if (minibufferp)
+      (save-restriction
+        (narrow-to-region (minibuffer-prompt-end) (point-max))
+        (syntax-ppss))
+    (syntax-ppss)))
+
 (defun visual-regexp-rx--context ()
   "Return the rx context at point as (HEAD-P . OPERATOR).
-HEAD-P is non-nil when point is on the first element of the
-innermost enclosing list, where the rx operator is expected.
-OPERATOR is the symbol at the head of that list, or nil when
-point is outside any list."
-  (let ((start (nth 1 (syntax-ppss))))
-    (if (null start)
-        (cons t nil)
-      (let* ((bounds (bounds-of-thing-at-point 'symbol))
-             (symbol-start (or (car bounds) (point)))
-             (head-start (save-excursion
-                           (goto-char (1+ start))
-                           (skip-chars-forward " \t\n")
-                           (point))))
-        (cons (= symbol-start head-start)
-              (save-excursion
-                (goto-char head-start)
-                (let ((head (bounds-of-thing-at-point 'symbol)))
-                  (and head
-                       (intern (buffer-substring-no-properties
-                                (car head) (cdr head)))))))))))
+HEAD-P is t when point is on the first element of the innermost
+enclosing list, `top' when outside any list, and nil in an
+argument position.  OPERATOR is the symbol at the head of the
+enclosing list, or nil outside any list."
+  (save-restriction
+    (when (minibufferp)
+      (narrow-to-region (minibuffer-prompt-end) (point-max)))
+    (let ((start (nth 1 (syntax-ppss))))
+      (if (null start)
+          (cons 'top nil)
+        (let* ((bounds (bounds-of-thing-at-point 'symbol))
+               (symbol-start (or (car bounds) (point)))
+               (head-start (save-excursion
+                             (goto-char (1+ start))
+                             (skip-chars-forward " \t\n")
+                             (point))))
+          (cons (= symbol-start head-start)
+                (save-excursion
+                  (goto-char head-start)
+                  (let ((head (bounds-of-thing-at-point 'symbol)))
+                    (and head
+                         (intern (buffer-substring-no-properties
+                                  (car head) (cdr head))))))))))))
 
-(defun visual-regexp-rx--defined-names ()
-  "Return the symbols that `rx-define' has defined."
+(defun visual-regexp-rx--defined-names (&optional kind)
+  "Return the symbols that `rx-define' has defined.
+When KIND is `form', return only parameterized definitions.
+When KIND is `symbol', return only zero-argument definitions.
+Otherwise return all defined names."
   (let (names)
     (mapatoms (lambda (symbol)
-                (when (get symbol 'rx-definition)
-                  (push symbol names))))
+                (let ((def (get symbol 'rx-definition)))
+                  (when (and def
+                             (pcase kind
+                               ('form (cdr def))
+                               ('symbol (null (cdr def)))
+                               (_ t)))
+                    (push symbol names)))))
     names))
 
 (defun visual-regexp-rx--names (&optional context)
   "Return the rx names to offer as completion candidates at point.
 CONTEXT defaults to `visual-regexp-rx--context'."
   (let* ((context (or context (visual-regexp-rx--context)))
+         (head-p (car context))
          (operator (cdr context)))
     (visual-regexp-rx--strings
-     (if (car context)
-         (append rx--builtin-forms rx--builtin-symbols
-                 (visual-regexp-rx--defined-names))
-       (cond
-        ((memq operator '(syntax not-syntax))
-         (mapcar #'car rx--syntax-codes))
-        ((eq operator 'category)
-         (mapcar #'car rx--categories))
-        ((memq operator (list 'any 'in 'char 'not-char))
-         (mapcar #'car rx--char-classes))
-        (t
-         (append rx--builtin-forms rx--builtin-symbols
-                 (visual-regexp-rx--defined-names))))))))
+     (cond
+      ((eq head-p t)
+       (append rx--builtin-forms
+               (visual-regexp-rx--defined-names 'form)))
+      ((eq head-p 'top)
+       (append rx--builtin-symbols
+               (visual-regexp-rx--defined-names 'symbol)))
+      ((memq operator '(syntax not-syntax))
+       (mapcar #'car rx--syntax-codes))
+      ((eq operator 'category)
+       (mapcar #'car rx--categories))
+      ((memq operator (list 'any 'in 'char 'not-char 'intersection))
+       (mapcar #'car rx--char-classes))
+      (t
+       (append rx--builtin-symbols
+               (visual-regexp-rx--defined-names 'symbol)))))))
 
 (defun visual-regexp-rx--label (name)
   "Return the kind label shown for the rx name NAME.
@@ -424,6 +450,9 @@ Names that are both a character class and a syntax code, such as
      ((and (memq visual-regexp-rx--completion-operator '(syntax not-syntax))
            (assq symbol rx--syntax-codes))
       "syntax")
+     ((and (eq symbol 'any)
+           (not (eq visual-regexp-rx--completion-head-p t)))
+      "symbol")
      ((assq symbol rx--char-classes) "class")
      ((assq symbol rx--syntax-codes) "syntax")
      ((assq symbol rx--categories) "category")
@@ -444,7 +473,7 @@ Names that are both a character class and a syntax code, such as
 
 (defun visual-regexp-rx--translation (symbol)
   "Return the regexp that the rx SYMBOL translates to."
-  (mapconcat #'identity (car (rx--translate symbol)) ""))
+  (rx-to-string symbol t))
 
 (defun visual-regexp-rx--definition-string (symbol)
   "Return the `rx-define' form of SYMBOL, as a string."
@@ -493,7 +522,8 @@ Names that are both a character class and a syntax code, such as
   "Complete the rx name at point."
   (let* ((context (visual-regexp-rx--context))
          (bounds (bounds-of-thing-at-point 'symbol)))
-    (setq visual-regexp-rx--completion-operator (cdr context))
+    (setq visual-regexp-rx--completion-head-p (car context)
+          visual-regexp-rx--completion-operator (cdr context))
     (list (or (car bounds) (point))
           (or (cdr bounds) (point))
           (visual-regexp-rx--names context)
@@ -571,7 +601,7 @@ completion is disabled or point is not in an rx context."
   (when (and visual-regexp-rx-completion
              (eq vr/engine 'rx)
              (eq vr--in-minibuffer 'vr--minibuffer-regexp))
-    (if (nth 3 (syntax-ppss))
+    (if (nth 3 (visual-regexp-rx--syntax-ppss))
         (visual-regexp-rx--word-capf)
       (visual-regexp-rx--name-capf))))
 

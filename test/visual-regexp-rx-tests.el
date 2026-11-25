@@ -440,14 +440,14 @@
         (vr--in-minibuffer 'vr--minibuffer-regexp)
         (visual-regexp-rx-completion t))
     (with-temp-buffer
-      (insert "(seq gr")
+      (insert "(seq (gr")
       (goto-char (point-max))
       (should-not (visual-regexp-rx--capf))))
   (let ((vr/engine 'rx)
         (vr--in-minibuffer 'vr--minibuffer-regexp)
         (visual-regexp-rx-completion t))
     (with-temp-buffer
-      (insert "(seq gr")
+      (insert "(seq (gr")
       (goto-char (point-max))
       (should (member "group" (nth 2 (visual-regexp-rx--capf)))))))
 
@@ -504,10 +504,80 @@
               (should capf)
               (should (member "TODO" (nth 2 capf)))))
           (with-temp-buffer
-            (insert "(seq gr")
+            (insert "(seq (gr")
             (goto-char (point-max))
             (should (member "group" (nth 2 (visual-regexp-rx--capf))))))
       (kill-buffer target))))
+
+(ert-deftest vrx-tests-minibuffer-syntax-ppss-ignores-prompt ()
+  "Unbalanced quotes in the minibuffer prompt do not invert rx completion."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-completion t)
+        (minibuffer (window-buffer (minibuffer-window))))
+    (with-current-buffer minibuffer
+      (let ((inhibit-read-only t))
+        (unwind-protect
+            (progn
+              (erase-buffer)
+              (insert (propertize "Query replace \" -> ': "
+                                  'read-only t 'field t 'front-sticky t))
+              (insert "(seq (gr")
+              (goto-char (point-max))
+              (let ((capf (visual-regexp-rx--capf)))
+                (should capf)
+                (should (member "group" (nth 2 capf)))))
+          (erase-buffer))))))
+
+(ert-deftest vrx-tests-completion-context-filtering ()
+  "List-head, argument, and `intersection' positions filter candidates."
+  (unwind-protect
+      (progn
+        (rx-define vrx-tests-zero-arg (seq "z"))
+        (rx-define vrx-tests-param-arg (x) (seq "z" x))
+        ;; Head of list: forms + parameterized rx-define, not bare symbols.
+        (with-temp-buffer
+          (insert "(seq (")
+          (goto-char (point-max))
+          (let ((candidates (nth 2 (visual-regexp-rx--name-capf))))
+            (should (member "group" candidates))
+            (should (member "vrx-tests-param-arg" candidates))
+            (should-not (member "digit" candidates))
+            (should-not (member "vrx-tests-zero-arg" candidates))))
+        ;; Argument position: symbols + zero-arg rx-define, not forms.
+        (with-temp-buffer
+          (insert "(seq ")
+          (goto-char (point-max))
+          (let ((candidates (nth 2 (visual-regexp-rx--name-capf))))
+            (should (member "digit" candidates))
+            (should (member "vrx-tests-zero-arg" candidates))
+            (should-not (member "group" candidates))
+            (should-not (member "vrx-tests-param-arg" candidates))))
+        ;; `intersection' only offers character classes.
+        (with-temp-buffer
+          (insert "(intersection bl")
+          (goto-char (point-max))
+          (let ((candidates (nth 2 (visual-regexp-rx--name-capf))))
+            (should (member "blank" candidates))
+            (should-not (member "group" candidates))))
+        ;; `any' is labelled "symbol" in arg position and "form" at head.
+        (with-temp-buffer
+          (insert "(seq any")
+          (goto-char (point-max))
+          (visual-regexp-rx--name-capf)
+          (should (equal (visual-regexp-rx--label "any") "symbol")))
+        (with-temp-buffer
+          (insert "(any")
+          (goto-char (point-max))
+          (visual-regexp-rx--name-capf)
+          (should (equal (visual-regexp-rx--label "any") "form"))))
+    (put 'vrx-tests-zero-arg 'rx-definition nil)
+    (put 'vrx-tests-param-arg 'rx-definition nil)))
+
+(ert-deftest vrx-tests-all-builtin-forms-documented ()
+  "Every form in `rx--builtin-forms' has documentation in `--form-docs'."
+  (dolist (form rx--builtin-forms)
+    (should (assoc (symbol-name form) visual-regexp-rx--form-docs))))
 
 (ert-deftest vrx-tests-edit-advices-installed ()
   "The two around advices of the editing buffer are installed."
