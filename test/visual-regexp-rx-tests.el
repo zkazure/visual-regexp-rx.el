@@ -619,13 +619,17 @@
       (kill-buffer target))))
 
 (ert-deftest vrx-tests-edit-advices-installed ()
-  "The two around advices of the editing buffer are installed."
+  "All five around advices of the editing buffer are installed."
   (should (advice-member-p #'visual-regexp-rx--around-interactive-get-args
                            'vr--interactive-get-args))
   (should (advice-member-p #'visual-regexp-rx--editing-get-regexp-string-full
                            'vr--get-regexp-string-full))
   (should (advice-member-p #'visual-regexp-rx--editing-minibuffer-message
-                           'vr--minibuffer-message)))
+                           'vr--minibuffer-message))
+  (should (advice-member-p #'visual-regexp-rx--editing-skip-minibuffer-setup
+                           'vr--minibuffer-setup))
+  (should (advice-member-p #'visual-regexp-rx--editing-skip-after-change
+                           'vr--after-change)))
 
 (ert-deftest vrx-tests-edit-customs-defaults ()
   "The editing buffer and safety options exist with their documented defaults."
@@ -784,12 +788,8 @@ out, since these tests have no target buffer to render into."
         (should-not visual-regexp-rx--pristine)))))
 
 (ert-deftest vrx-tests-edit-mode-hook-runs ()
-  "Setting up the editing buffer runs `visual-regexp-rx-edit-mode-hook'.
-That hook is where a buffer-local completion UI -- Corfu, say -- gets
-enabled for a buffer the user's global modes never reach: the buffer is
-set up with `delay-mode-hooks', so its major mode's hooks are delayed and
-then dropped with the buffer, and global minor modes riding on
-`after-change-major-mode-hook' never see it either."
+  "Setting up the editing buffer runs `visual-regexp-rx-edit-mode-hook' once.
+Teardown must not invoke the hook a second time."
   ;; `let*' matters here: an init form is evaluated in the enclosing
   ;; environment, so with a plain `let' the hook would record into some
   ;; other binding of SEEN and the assertion would pass on nothing.
@@ -797,14 +797,20 @@ then dropped with the buffer, and global minor modes riding on
          (vr--in-minibuffer 'vr--minibuffer-regexp)
          (visual-regexp-rx-use-editing-buffer t)
          (vr--last-minibuffer-contents "")
+         (calls 0)
          (seen nil)
          (fn (lambda ()
+               (setq calls (1+ calls))
                (setq seen (list (buffer-name) visual-regexp-rx-edit-mode)))))
     (cl-letf (((symbol-function 'vr--show-feedback) (lambda (&rest _) nil)))
       (add-hook 'visual-regexp-rx-edit-mode-hook fn)
       (unwind-protect
-          (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
-            (should (equal seen (list (buffer-name buffer) t))))
+          (progn
+            (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
+              (should (equal seen (list (buffer-name buffer) t)))
+              (should (= calls 1)))
+            (visual-regexp-rx--edit-buffer-teardown)
+            (should (= calls 1)))
         (remove-hook 'visual-regexp-rx-edit-mode-hook fn)
         (visual-regexp-rx--edit-buffer-teardown)))))
 
@@ -1148,13 +1154,13 @@ rejects nil, so an editing session must leave an overlay behind."
       (should-not (overlay-start overlay)))))
 
 (ert-deftest vrx-tests-edit-history-prev-and-next ()
-  "The history commands cycle the inputs the minibuffer would offer."
+  "The history commands cycle inputs and restore the initial draft."
   (let ((vr/engine 'rx)
         (vr--in-minibuffer 'vr--minibuffer-regexp)
         (visual-regexp-rx-use-editing-buffer t)
         (vr/query-replace-from-history-variable 'vrx-tests--from-history)
         (vr/query-replace-defaults-variable 'vrx-tests--defaults)
-        (vrx-tests--from-history '("(seq \"a\")" "(seq \"b\")"))
+        (vrx-tests--from-history '("(seq \"a\")" "(seq \"b\")" "(seq \"c\")"))
         (vrx-tests--defaults nil)
         (renders 0))
     (vrx-tests--with-editing-buffer
@@ -1162,25 +1168,28 @@ rejects nil, so an editing session must leave an overlay behind."
                  (lambda (&rest _) (setq renders (1+ renders)))))
         (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
           (should (= renders 1))        ; the prefill render
+          (with-current-buffer buffer
+            (erase-buffer)
+            (insert "(seq \"draft\")"))
           ;; The most recent input comes first.
           (visual-regexp-rx-edit-history-prev)
           (should (equal (with-current-buffer buffer (buffer-string))
                          "(seq \"a\")"))
-          (should (= renders 2))        ; cycling updates the preview
-          (visual-regexp-rx-edit-history-prev)
+          ;; Prefix argument steps multiple entries at once.
+          (visual-regexp-rx-edit-history-prev 2)
           (should (equal (with-current-buffer buffer (buffer-string))
-                         "(seq \"b\")"))
-          ;; Going forward returns to the more recent one and stops
-          ;; there instead of running off the end of the ring.
-          (visual-regexp-rx-edit-history-next)
+                         "(seq \"c\")"))
+          (visual-regexp-rx-edit-history-next 2)
           (should (equal (with-current-buffer buffer (buffer-string))
                          "(seq \"a\")"))
+          ;; Going forward past the newest entry restores the draft.
           (visual-regexp-rx-edit-history-next)
           (should (equal (with-current-buffer buffer (buffer-string))
-                         "(seq \"a\")"))
-          (should (= (buffer-local-value
-                      'visual-regexp-rx--edit-history-index buffer)
-                     0)))))))
+                         "(seq \"draft\")"))
+          (should-not (buffer-local-value
+                       'visual-regexp-rx--edit-history-index buffer))
+          (should-not (buffer-local-value
+                       'visual-regexp-rx--edit-history-draft buffer)))))))
 
 (ert-deftest vrx-tests-edit-history-pair-keeps-separator ()
   "A search/replace pair survives the round trip through the buffer.
@@ -1309,11 +1318,33 @@ while the user types there."
                    (lambda (&rest _) 'change-ran) 1 2 0)
                   'change-ran)))))
 
+(ert-deftest vrx-tests-edit-after-change-clears-stale-message ()
+  "Subsequent edits clear a stale error or help message in the header."
+  (let ((vr/engine 'rx)
+        (vr--in-minibuffer 'vr--minibuffer-regexp)
+        (visual-regexp-rx-use-editing-buffer t)
+        (vr--last-minibuffer-contents ""))
+    (vrx-tests--with-editing-buffer
+      (cl-letf (((symbol-function 'vr--show-feedback) (lambda (&rest _) nil))
+                ((symbol-function 'visual-regexp-rx--update-header)
+                 (lambda () nil)))
+        (let ((buffer (visual-regexp-rx--edit-buffer-setup)))
+          (setq visual-regexp-rx--edit-message "Invalid regexp: Unbalanced")
+          (with-current-buffer buffer
+            (insert "a"))
+          (should-not visual-regexp-rx--edit-message))))))
+
+(ert-deftest vrx-tests-edit-history-multiline-pair-no-escape-glyph ()
+  "Multi-line search forms in history pairs retain real newlines."
+  (let ((vr/query-replace-from-history-variable 'vrx-tests--from-history)
+        (vr/query-replace-defaults-variable 'vrx-tests--defaults)
+        (vrx-tests--from-history nil)
+        (vrx-tests--defaults '(("(seq \"a\"\n     \"b\")" . "x"))))
+    (let* ((elements (visual-regexp-rx--edit-history-elements))
+           (pair (car elements))
+           (nl-pos (string-match "\n" pair)))
+      (should nl-pos)
+      (should-not (get-text-property nl-pos 'display pair)))))
+
 (provide 'visual-regexp-rx-tests)
-
-
-
-
-
-
 ;;; visual-regexp-rx-tests.el ends here

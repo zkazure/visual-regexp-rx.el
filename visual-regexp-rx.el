@@ -88,6 +88,9 @@ middle of a session, and its window would then be left behind.")
 (defvar-local visual-regexp-rx--edit-history-index nil
   "Position in the input history while cycling it, or nil.")
 
+(defvar-local visual-regexp-rx--edit-history-draft nil
+  "Unsaved editing buffer contents captured before browsing history.")
+
 ;;; The rx engine (shares `vr/engine' with visual-regexp-steroids)
 
 (defun visual-regexp-rx--register-engine ()
@@ -708,7 +711,8 @@ to minibuffers."
              (eq vr--in-minibuffer 'vr--minibuffer-regexp))
     (let ((contents (buffer-substring-no-properties (point-min) (point-max))))
       (unless (string= vr--last-minibuffer-contents contents)
-        (setq vr--last-minibuffer-contents contents)
+        (setq vr--last-minibuffer-contents contents
+              visual-regexp-rx--edit-message nil)
         (vr--show-feedback)
         (visual-regexp-rx--update-header)))))
 
@@ -892,6 +896,7 @@ target buffer."
         (window visual-regexp-rx--edit-window))
     (setq visual-regexp-rx--editing-buffer nil
           visual-regexp-rx--edit-window nil
+          visual-regexp-rx--pristine nil
           visual-regexp-rx--word-cache nil
           ;; The session ends with the buffer it was read from; keeping
           ;; the two in step is what lets `--read-input' tell a read
@@ -902,8 +907,7 @@ target buffer."
         (remove-hook 'after-change-functions
                      #'visual-regexp-rx--edit-after-change t)
         (remove-hook 'before-change-functions
-                     #'visual-regexp-rx--clear-pristine t)
-        (visual-regexp-rx-edit-mode -1))
+                     #'visual-regexp-rx--clear-pristine t))
       (kill-buffer buffer))
     ;; The buffer may have been killed during the session, which can
     ;; leave its window behind; it is ours, so remove it as well.
@@ -943,7 +947,8 @@ in the middle of the session."
       (visual-regexp-rx--edit-buffer-teardown)
       (when (window-live-p previous-window)
         (select-window previous-window))
-      (set-buffer previous-buffer))))
+      (when (buffer-live-p previous-buffer)
+        (set-buffer previous-buffer)))))
 
 (defun visual-regexp-rx--read-input (real-read args)
   "Read one input for visual-regexp.
@@ -1001,7 +1006,7 @@ split them again, and then the regexps of
     (append
      (when separator
        (mapcar (lambda (from-to)
-                 (concat (query-replace-descr (car from-to))
+                 (concat (car from-to)
                          separator
                          (query-replace-descr (cdr from-to))))
                (symbol-value vr/query-replace-defaults-variable)))
@@ -1027,28 +1032,40 @@ offer, which visual-regexp builds for that prompt only."
   (when (buffer-live-p visual-regexp-rx--editing-buffer)
     (with-current-buffer visual-regexp-rx--editing-buffer
       (let ((elements (visual-regexp-rx--edit-history-elements))
-            (position visual-regexp-rx--edit-history-index))
-        ;; Going further back starts the browsing; going forward only
-        ;; makes sense once it has started.  A nil position means the
-        ;; form was not taken from the history yet, which is one step
-        ;; before its most recent entry.
-        (when (and elements (or position (< 0 step)))
-          (setq position (max 0 (min (1- (length elements))
-                                     (+ (if position position -1) step))))
-          (setq visual-regexp-rx--edit-history-index position)
-          (visual-regexp-rx--edit-history-insert (nth position elements)))))))
+            (position visual-regexp-rx--edit-history-index)
+            (count (abs step)))
+        (cond
+         ((> step 0)
+          (when elements
+            (unless position
+              (setq visual-regexp-rx--edit-history-draft (buffer-string)))
+            (setq position (min (1- (length elements))
+                                (+ (if position position -1) count)))
+            (setq visual-regexp-rx--edit-history-index position)
+            (visual-regexp-rx--edit-history-insert (nth position elements))))
+         ((and (< step 0) position)
+          (let ((next (- position count)))
+            (if (< next 0)
+                (let ((draft (or visual-regexp-rx--edit-history-draft "")))
+                  (setq visual-regexp-rx--edit-history-index nil
+                        visual-regexp-rx--edit-history-draft nil)
+                  (visual-regexp-rx--edit-history-insert draft))
+              (setq visual-regexp-rx--edit-history-index next)
+              (visual-regexp-rx--edit-history-insert (nth next elements))))))))))
 
-(defun visual-regexp-rx-edit-history-prev ()
+(defun visual-regexp-rx-edit-history-prev (&optional arg)
   "Replace the edited form with an earlier input.
-This is what `M-p' does in visual-regexp's minibuffer."
-  (interactive)
-  (visual-regexp-rx--edit-history-cycle 1))
+ARG defaults to 1.  This is what `previous-history-element' does in
+visual-regexp's minibuffer."
+  (interactive "p")
+  (visual-regexp-rx--edit-history-cycle (or arg 1)))
 
-(defun visual-regexp-rx-edit-history-next ()
+(defun visual-regexp-rx-edit-history-next (&optional arg)
   "Replace the edited form with a later input.
-This is what `M-n' does in visual-regexp's minibuffer."
-  (interactive)
-  (visual-regexp-rx--edit-history-cycle -1))
+ARG defaults to 1.  This is what `next-history-element' does in
+visual-regexp's minibuffer."
+  (interactive "p")
+  (visual-regexp-rx--edit-history-cycle (- (or arg 1))))
 
 ;;; Prefill the rx form
 
