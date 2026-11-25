@@ -38,6 +38,21 @@
   (should (boundp 'vr/engine))
   (should (member '(const rx) (cdr (get 'vr/engine 'custom-type)))))
 
+(ert-deftest vrx-tests-register-engine-preserves-choice ()
+  "`visual-regexp-rx--register-engine' appends `(const rx)' cleanly."
+  (let ((orig (get 'vr/engine 'custom-type)))
+    (unwind-protect
+        (progn
+          (put 'vr/engine 'custom-type '(choice (const emacs) (const python)))
+          (visual-regexp-rx--register-engine)
+          (should (equal (get 'vr/engine 'custom-type)
+                         '(choice (const emacs) (const python) (const rx))))
+          ;; Calling it again is idempotent.
+          (visual-regexp-rx--register-engine)
+          (should (equal (get 'vr/engine 'custom-type)
+                         '(choice (const emacs) (const python) (const rx)))))
+      (put 'vr/engine 'custom-type orig))))
+
 (ert-deftest vrx-tests-advice-installed ()
   "The around advice is installed on `vr--get-regexp-string'."
   (should (advice-member-p #'visual-regexp-rx--get-regexp-string 'vr--get-regexp-string)))

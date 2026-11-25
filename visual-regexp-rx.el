@@ -86,11 +86,18 @@ middle of a session, and its window would then be left behind.")
 
 ;;; The rx engine (shares `vr/engine' with visual-regexp-steroids)
 
+(defun visual-regexp-rx--register-engine ()
+  "Add `rx' to `vr/engine' choices when `vr/engine' is already defined."
+  (let ((type (get 'vr/engine 'custom-type)))
+    (when (and (consp type)
+               (eq (car type) 'choice)
+               (not (member '(const rx) (cdr type))))
+      (put 'vr/engine 'custom-type (append type (list '(const rx)))))))
+
 (if (boundp 'vr/engine)
     ;; visual-regexp-steroids already defines it: just offer rx as an
     ;; additional engine choice.
-    (cl-pushnew 'rx (get 'vr/engine 'custom-type)
-                :test #'equal)
+    (visual-regexp-rx--register-engine)
   (defcustom vr/engine 'emacs
     "Regexp engine used by visual-regexp.
 `emacs' uses plain Emacs regexps; `rx' reads the input as an rx
@@ -100,6 +107,13 @@ Set this to `rx' in your init file to use rx notation with
 visual-regexp's own commands, e.g. (setq vr/engine 'rx)."
     :type '(choice (const emacs) (const rx))
     :group 'visual-regexp))
+
+(defun visual-regexp-rx--after-load (file)
+  "Re-register the `rx' choice when `visual-regexp-steroids' loads from FILE."
+  (when (string-match-p "visual-regexp-steroids" file)
+    (visual-regexp-rx--register-engine)))
+
+(add-hook 'after-load-functions #'visual-regexp-rx--after-load)
 
 ;;; User options
 
