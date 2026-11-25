@@ -207,20 +207,84 @@ is passed to `display-buffer' as the `window-height' entry."
   :type 'number
   :group 'visual-regexp)
 
+(defcustom visual-regexp-rx-allow-eval nil
+  "Whether to allow `(eval EXPR)' forms in rx input.
+Because live preview compiles the input on every edit, an `eval'
+subform would be evaluated repeatedly while you type.  Keep this
+nil unless you intend to run Lisp expressions during preview."
+  :type 'boolean
+  :group 'visual-regexp)
+
 ;;; Compile rx input
 
 (defconst visual-regexp-rx--unmatchable "\\`a\\`"
   "Regexp guaranteed not to match any string.")
 
+(defun visual-regexp-rx--fill-empty-tail (tail)
+  "Recursively replace empty `()' placeholders in list TAIL.
+Preserves improper list endings such as `(any (?a . ?z))' and
+terminating nil."
+  (cond
+   ((null tail) nil)
+   ((consp tail)
+    (cons (visual-regexp-rx--fill-empty (car tail))
+          (visual-regexp-rx--fill-empty-tail (cdr tail))))
+   (t tail)))
+
 (defun visual-regexp-rx--fill-empty (form)
   "Replace empty `()' placeholders in FORM with `(seq)'.
 Nested empty lists become `(seq)' too, so `(seq \"TODO\" ())'
 compiles instead of erroring out while the form is under
-construction."
+construction.  Improper lists such as `(any (?a . ?z))' are
+preserved."
   (cond
    ((null form) '(seq))
-   ((consp form) (mapcar #'visual-regexp-rx--fill-empty form))
+   ((consp form)
+    (cons (visual-regexp-rx--fill-empty (car form))
+          (visual-regexp-rx--fill-empty-tail (cdr form))))
    (t form)))
+
+(defun visual-regexp-rx--contains-eval-p (form)
+  "Return non-nil when rx FORM contains an `(eval ...)' subform."
+  (and (consp form)
+       (or (eq (car form) 'eval)
+           (let ((cur form)
+                 (found nil))
+             (while (and (consp cur) (not found))
+               (when (visual-regexp-rx--contains-eval-p (car cur))
+                 (setq found t))
+               (setq cur (cdr cur)))
+             found))))
+
+(defun visual-regexp-rx--read-form (string)
+  "Read a single Lisp form from STRING.
+Signals `invalid-regexp' if STRING cannot be read or contains
+non-whitespace text after the first form."
+  (condition-case err
+      (let* ((res (read-from-string string))
+             (form (car res))
+             (pos (cdr res)))
+        (condition-case nil
+            (progn
+              (ignore (read-from-string string pos))
+              (signal 'invalid-regexp (list "Trailing text after rx form")))
+          (end-of-file form)))
+    (invalid-regexp (signal (car err) (cdr err)))
+    (error (signal 'invalid-regexp (list (error-message-string err))))))
+
+(defun visual-regexp-rx--compile (string)
+  "Compile rx form STRING into an Emacs regexp string.
+Signals `invalid-regexp' on read or compilation errors."
+  (let ((form (visual-regexp-rx--fill-empty
+               (visual-regexp-rx--read-form string))))
+    (when (and (not visual-regexp-rx-allow-eval)
+               (visual-regexp-rx--contains-eval-p form))
+      (signal 'invalid-regexp
+              (list "rx `eval' form disabled (see `visual-regexp-rx-allow-eval')")))
+    (condition-case err
+        (rx-to-string form)
+      (invalid-regexp (signal (car err) (cdr err)))
+      (error (signal 'invalid-regexp (list (error-message-string err)))))))
 
 (defun visual-regexp-rx--get-regexp-string (orig &optional for-display)
   "Compile the input as an rx form when `vr/engine' is `rx'.
@@ -242,10 +306,7 @@ zero-width highlights."
                  visual-regexp-rx-suppress-empty-highlight
                  (string= regexp visual-regexp-rx-prefill-form))
             visual-regexp-rx--unmatchable
-          (condition-case err
-              (rx-to-string (visual-regexp-rx--fill-empty (read regexp)))
-            (invalid-regexp (signal (car err) (cdr err))) ; rethrow unchanged
-            (error (signal 'invalid-regexp (list "Invalid rx form")))))
+          (visual-regexp-rx--compile regexp))
       regexp)))
 
 (advice-add 'vr--get-regexp-string :around #'visual-regexp-rx--get-regexp-string)

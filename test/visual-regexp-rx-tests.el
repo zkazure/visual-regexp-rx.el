@@ -86,11 +86,45 @@
                   :type 'invalid-regexp)))
 
 (ert-deftest vrx-tests-unknown-keyword-signals ()
-  "Unknown rx keywords signal `invalid-regexp'."
+  "Unknown rx keywords signal `invalid-regexp' with diagnostic details."
+  (let ((vr/engine 'rx))
+    (let ((err (should-error (visual-regexp-rx--get-regexp-string
+                              (lambda (&optional _) "(foo)"))
+                             :type 'invalid-regexp)))
+      (should (string-match-p "foo" (cadr err))))))
+
+(ert-deftest vrx-tests-fill-empty-dotted-pair ()
+  "Dotted pairs such as `(any (?a . ?z))' compile without error."
+  (let ((vr/engine 'rx))
+    (should (equal (visual-regexp-rx--get-regexp-string
+                    (lambda (&optional _) "(any (?a . ?z))"))
+                   (rx-to-string '(any (?a . ?z)))))))
+
+(ert-deftest vrx-tests-trailing-text-and-comments ()
+  "Trailing forms or stray parens fail, while trailing comments succeed."
   (let ((vr/engine 'rx))
     (should-error (visual-regexp-rx--get-regexp-string
-                   (lambda (&optional _) "(foo)"))
-                  :type 'invalid-regexp)))
+                   (lambda (&optional _) "(seq \"a\") (seq \"b\")"))
+                  :type 'invalid-regexp)
+    (should-error (visual-regexp-rx--get-regexp-string
+                   (lambda (&optional _) "(seq \"a\"))"))
+                  :type 'invalid-regexp)
+    (should (equal (visual-regexp-rx--get-regexp-string
+                    (lambda (&optional _) "(seq \"a\") ; comment\n"))
+                   (rx-to-string '(seq "a"))))))
+
+(ert-deftest vrx-tests-eval-form-guarded ()
+  "`(eval ...)' is blocked unless `visual-regexp-rx-allow-eval' is non-nil."
+  (let ((vr/engine 'rx)
+        (visual-regexp-rx-allow-eval nil))
+    (should-error (visual-regexp-rx--get-regexp-string
+                   (lambda (&optional _) "(seq (eval \"abc\"))"))
+                  :type 'invalid-regexp))
+  (let ((vr/engine 'rx)
+        (visual-regexp-rx-allow-eval t))
+    (should (equal (visual-regexp-rx--get-regexp-string
+                    (lambda (&optional _) "(seq (eval \"abc\"))"))
+                   (rx-to-string '(seq (eval "abc")))))))
 
 (ert-deftest vrx-tests-prefill-regexp-minibuffer ()
   "The regexp minibuffer is prefilled with (seq \"\") in rx mode."
@@ -485,13 +519,15 @@
                            'vr--minibuffer-message)))
 
 (ert-deftest vrx-tests-edit-customs-defaults ()
-  "The editing buffer options exist with their documented defaults."
+  "The editing buffer and safety options exist with their documented defaults."
   (should-not visual-regexp-rx-use-editing-buffer)
   (should (eq visual-regexp-rx-edit-buffer-mode 'lisp-data-mode))
   (should (equal visual-regexp-rx-edit-buffer-height 0.35))
+  (should-not visual-regexp-rx-allow-eval)
   (dolist (var '(visual-regexp-rx-use-editing-buffer
                  visual-regexp-rx-edit-buffer-mode
-                 visual-regexp-rx-edit-buffer-height))
+                 visual-regexp-rx-edit-buffer-height
+                 visual-regexp-rx-allow-eval))
     (should (member (list var 'custom-variable)
                     (get 'visual-regexp 'custom-group)))))
 
