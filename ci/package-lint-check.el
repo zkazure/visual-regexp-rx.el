@@ -1,4 +1,4 @@
-;;; package-lint-check.el --- CI helper: run package-lint on the package
+;;; package-lint-check.el --- CI helper: run package-lint on the package -*- lexical-binding: t -*-
 
 ;; This file is not part of GNU Emacs.
 
