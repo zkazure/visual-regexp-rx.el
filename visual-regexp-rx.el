@@ -45,7 +45,6 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'dabbrev)
 (require 'rx)
 (require 'visual-regexp)
 
@@ -64,6 +63,8 @@
 ;; Completion position flag: t at the head of a list, `top' outside
 ;; any list, nil in an argument position.
 (defvar visual-regexp-rx--completion-head-p nil)
+;; Cache of target buffer words: (BUFFER TICK . WORDS).
+(defvar visual-regexp-rx--word-cache nil)
 
 ;;; Edit-the-buffer state
 
@@ -216,6 +217,15 @@ Because live preview compiles the input on every edit, an `eval'
 subform would be evaluated repeatedly while you type.  Keep this
 nil unless you intend to run Lisp expressions during preview."
   :type 'boolean
+  :group 'visual-regexp)
+
+(defcustom visual-regexp-rx-word-completion-max-buffer-size 500000
+  "Maximum target buffer size in characters for word completion.
+When the searched buffer is larger than this limit, words are not
+scanned inside rx string literals, while rx keyword completion
+remains active.  Set to nil to scan buffers of any size."
+  :type '(choice (integer :tag "Max characters")
+                 (const :tag "No limit" nil))
   :group 'visual-regexp)
 
 ;;; Compile rx input
@@ -538,38 +548,73 @@ Names that are both a character class and a syntax code, such as
 (defun visual-regexp-rx--word-bounds ()
   "Return the bounds of the word around point inside a string.
 Return nil when there is no word character at point."
-  (let ((regexp (or dabbrev-abbrev-char-regexp "\\sw\\|\\s_"))
-        (limit (if (minibufferp) (minibuffer-prompt-end) (point-min))))
-    (when (or (looking-at regexp)
-              (and (> (point) limit)
-                   (save-excursion (forward-char -1) (looking-at regexp))))
-      (cons (save-excursion
-              (while (and (> (point) limit)
-                          (save-excursion (forward-char -1)
-                                          (looking-at regexp)))
-                (forward-char -1))
-              (point))
-            (save-excursion
-              (while (looking-at regexp)
-                (forward-char 1))
-              (point))))))
+  (let* ((ppss (visual-regexp-rx--syntax-ppss))
+         (str-start (nth 8 ppss))
+         (base-limit (if (minibufferp) (minibuffer-prompt-end) (point-min)))
+         (limit (if str-start (max base-limit (1+ str-start)) base-limit))
+         (table (if (buffer-live-p vr--target-buffer)
+                    (with-current-buffer vr--target-buffer (syntax-table))
+                  (syntax-table)))
+         (regexp "\\sw\\|\\s_"))
+    (with-syntax-table table
+      (when (or (looking-at regexp)
+                (and (> (point) limit)
+                     (save-excursion (forward-char -1) (looking-at regexp))))
+        (cons (save-excursion
+                (while (and (> (point) limit)
+                            (save-excursion (forward-char -1)
+                                            (looking-at regexp)))
+                  (forward-char -1))
+                (point))
+              (save-excursion
+                (while (looking-at regexp)
+                  (forward-char 1))
+                (point)))))))
+
+(defun visual-regexp-rx--collect-buffer-words (buffer)
+  "Return all distinct words in BUFFER, using a per-tick cache."
+  (when (buffer-live-p buffer)
+    (let ((tick (buffer-chars-modified-tick buffer)))
+      (if (and visual-regexp-rx--word-cache
+               (eq (car visual-regexp-rx--word-cache) buffer)
+               (eql (cadr visual-regexp-rx--word-cache) tick))
+          (cddr visual-regexp-rx--word-cache)
+        (let ((words
+               (with-current-buffer buffer
+                 (when (or (null visual-regexp-rx-word-completion-max-buffer-size)
+                           (<= (buffer-size)
+                               visual-regexp-rx-word-completion-max-buffer-size))
+                   (let ((seen (make-hash-table :test #'equal))
+                         (result nil))
+                     (save-excursion
+                       (save-restriction
+                         (widen)
+                         (goto-char (point-min))
+                         (while (re-search-forward "\\(?:\\sw\\|\\s_\\)+" nil t)
+                           (let ((word (match-string-no-properties 0)))
+                             (unless (gethash word seen)
+                               (puthash word t seen)
+                               (push word result))))))
+                     (nreverse result))))))
+          (setq visual-regexp-rx--word-cache (cons buffer (cons tick words)))
+          words)))))
 
 (defun visual-regexp-rx--buffer-words (prefix)
   "Return the words of the searched buffer that start with PREFIX.
 The words come from `vr--target-buffer', the buffer visual-regexp
-is operating on, using dabbrev's own rules."
+is operating on."
   (when (buffer-live-p vr--target-buffer)
-    (let ((dabbrev-check-other-buffers nil)
-          (dabbrev-check-all-buffers nil)
-          (dabbrev-backward-only nil)
-          (dabbrev-limit nil)
-          (dabbrev-search-these-buffers-only (list vr--target-buffer))
-          (inhibit-message t)
-          (message-log-max nil)
-          (inhibit-redisplay t))
-      (dabbrev--reset-global-variables)
-      (seq-take (dabbrev--find-all-expansions prefix case-fold-search)
-                visual-regexp-rx--word-limit))))
+    (let ((fold (buffer-local-value 'case-fold-search vr--target-buffer))
+          (words (visual-regexp-rx--collect-buffer-words vr--target-buffer))
+          (matches nil)
+          (count 0))
+      (while (and words (< count visual-regexp-rx--word-limit))
+        (let ((word (car words)))
+          (when (string-prefix-p prefix word fold)
+            (push word matches)
+            (setq count (1+ count))))
+        (setq words (cdr words)))
+      (nreverse matches))))
 
 (defun visual-regexp-rx--word-annotate (name)
   "Return the annotation shown after the buffer word NAME."
@@ -847,6 +892,7 @@ target buffer."
         (window visual-regexp-rx--edit-window))
     (setq visual-regexp-rx--editing-buffer nil
           visual-regexp-rx--edit-window nil
+          visual-regexp-rx--word-cache nil
           ;; The session ends with the buffer it was read from; keeping
           ;; the two in step is what lets `--read-input' tell a read
           ;; that is already being served from one that is not.

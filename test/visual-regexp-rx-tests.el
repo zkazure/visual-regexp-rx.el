@@ -579,6 +579,45 @@
   (dolist (form rx--builtin-forms)
     (should (assoc (symbol-name form) visual-regexp-rx--form-docs))))
 
+(ert-deftest vrx-tests-word-completion-cache-limit-and-syntax ()
+  "Word completion respects size limit, tick cache, and target syntax."
+  (let* ((target (generate-new-buffer " *vrx-word-syntax*"))
+         (vr--target-buffer target)
+         (vr/engine 'rx)
+         (vr--in-minibuffer 'vr--minibuffer-regexp)
+         (visual-regexp-rx-completion t)
+         (visual-regexp-rx--word-cache nil))
+    (unwind-protect
+        (progn
+          (with-current-buffer target
+            (emacs-lisp-mode)
+            (insert "foo-bar-baz foo-qux"))
+          ;; Respects target buffer syntax table and string start boundary.
+          (with-temp-buffer
+            (insert "(seq \"foo-b")
+            (goto-char (point-max))
+            (let ((capf (visual-regexp-rx--capf)))
+              (should capf)
+              (should (= (nth 0 capf) 7))
+              (should (member "foo-bar-baz" (nth 2 capf)))))
+          ;; Cache is populated for target buffer's tick.
+          (should (eq (car visual-regexp-rx--word-cache) target))
+          (let ((cached visual-regexp-rx--word-cache))
+            (should (equal (visual-regexp-rx--collect-buffer-words target)
+                           (cddr cached))))
+          ;; Size limit disables word scanning without disabling rx keywords.
+          (setq visual-regexp-rx--word-cache nil)
+          (let ((visual-regexp-rx-word-completion-max-buffer-size 5))
+            (with-temp-buffer
+              (insert "(seq \"foo")
+              (goto-char (point-max))
+              (should-not (visual-regexp-rx--capf)))
+            (with-temp-buffer
+              (insert "(seq (gr")
+              (goto-char (point-max))
+              (should (member "group" (nth 2 (visual-regexp-rx--capf)))))))
+      (kill-buffer target))))
+
 (ert-deftest vrx-tests-edit-advices-installed ()
   "The two around advices of the editing buffer are installed."
   (should (advice-member-p #'visual-regexp-rx--around-interactive-get-args
@@ -594,10 +633,12 @@
   (should (eq visual-regexp-rx-edit-buffer-mode 'lisp-data-mode))
   (should (equal visual-regexp-rx-edit-buffer-height 0.35))
   (should-not visual-regexp-rx-allow-eval)
+  (should (equal visual-regexp-rx-word-completion-max-buffer-size 500000))
   (dolist (var '(visual-regexp-rx-use-editing-buffer
                  visual-regexp-rx-edit-buffer-mode
                  visual-regexp-rx-edit-buffer-height
-                 visual-regexp-rx-allow-eval))
+                 visual-regexp-rx-allow-eval
+                 visual-regexp-rx-word-completion-max-buffer-size))
     (should (member (list var 'custom-variable)
                     (get 'visual-regexp 'custom-group)))))
 
